@@ -41,21 +41,13 @@ local function log(level, message)
     local timestamp = os.date("%H:%M:%S")
     local logMessage = string.format("[%s] [%s] %s", timestamp, level, message)
     
-    -- Print to console
     print(logMessage)
     
-    -- Send important messages as notifications
     if level == "ERROR" then
         notify("Stock Monitor Error", message, 8)
     elseif level == "INFO" and (string.find(message, "started") or string.find(message, "successful")) then
         notify("Stock Monitor", message, 5)
     end
-end
-
-local function logStats()
-    local uptime = os.time() - State.lastUpdate
-    log("STATS", string.format("Updates sent: %d | Uptime: %ds | Session: %s", 
-        State.totalUpdates, uptime, CONFIG.SESSION_ID:sub(1, 8)))
 end
 
 -- Utility Functions
@@ -98,8 +90,7 @@ local function makeAPIRequest(method, data)
             Headers = {
                 ["Authorization"] = CONFIG.AUTH_HEADER,
                 ["Content-Type"] = "application/json",
-                ["X-Session-ID"] = CONFIG.SESSION_ID,
-                ["User-Agent"] = "BloxFruits-Monitor/2.0"
+                ["X-Session-ID"] = CONFIG.SESSION_ID
             }
         }
         
@@ -107,10 +98,11 @@ local function makeAPIRequest(method, data)
             requestData.Body = HttpService:JSONEncode(data)
         end
         
-        -- Client-side HTTP request
-        local request = http_request or request or HttpPost or syn.request
+        -- Try different HTTP request methods for different executors
+        local request = http_request or request or syn and syn.request
         if not request then
-            error("No HTTP request function available")
+            log("ERROR", "No HTTP request function available")
+            return nil
         end
         
         return request(requestData)
@@ -121,8 +113,7 @@ local function makeAPIRequest(method, data)
             State.retryCount = 0
             return true, response.Body
         else
-            local statusCode = response.StatusCode or "Unknown"
-            log("ERROR", "API request failed - Status: " .. tostring(statusCode))
+            log("ERROR", "API request failed - Status: " .. tostring(response.StatusCode or "Unknown"))
             return false, response.Body
         end
     else
@@ -149,16 +140,14 @@ local function sendStockData(stockData)
     
     if success then
         State.totalUpdates = State.totalUpdates + 1
-        log("INFO", string.format("Stock data sent - Normal: %d, Mirage: %d fruits", 
-            #normalStock, #mirageStock))
+        log("INFO", string.format("Stock sent - Normal: %d, Mirage: %d", #normalStock, #mirageStock))
         return true
     else
         State.retryCount = State.retryCount + 1
-        log("WARN", string.format("Send failed (attempt %d/%d)", State.retryCount, CONFIG.MAX_RETRIES))
+        log("WARN", string.format("Send failed (%d/%d)", State.retryCount, CONFIG.MAX_RETRIES))
         
         if State.retryCount >= CONFIG.MAX_RETRIES then
-            log("ERROR", "Max retries reached - stopping monitor")
-            notify("Stock Monitor", "Too many failures, stopping...", 10)
+            log("ERROR", "Max retries reached - stopping")
             State.isRunning = false
         end
         return false
@@ -169,25 +158,29 @@ local function cleanupSession()
     if not State.sessionActive then return end
     
     log("INFO", "Cleaning up session...")
-    local success, _ = makeAPIRequest("DELETE", {
-        sessionId = CONFIG.SESSION_ID,
-        reason = "client_disconnect",
-        timestamp = os.time()
-    })
-    
-    if success then
-        log("INFO", "Session cleanup successful")
-    else
-        log("WARN", "Session cleanup failed")
-    end
-    
+    pcall(function()
+        makeAPIRequest("DELETE", {
+            sessionId = CONFIG.SESSION_ID,
+            reason = "client_disconnect"
+        })
+    end)
     State.sessionActive = false
 end
 
 -- Game Data Functions
 local function getFruitStock()
     local success, result = pcall(function()
-        local CommF = ReplicatedStorage:WaitForChild("Remotes"):WaitForChild("CommF_")
+        -- Wait for remotes to load
+        local remotes = ReplicatedStorage:WaitForChild("Remotes", 10)
+        if not remotes then
+            error("Remotes not found")
+        end
+        
+        local CommF = remotes:WaitForChild("CommF_", 10)
+        if not CommF then
+            error("CommF_ not found")
+        end
+        
         return {
             normal = CommF:InvokeServer("GetFruits", false),
             mirage = CommF:InvokeServer("GetFruits", true)
@@ -197,83 +190,89 @@ local function getFruitStock()
     if success and result then
         return result
     else
-        log("ERROR", "Failed to get fruit stock: " .. tostring(result))
+        log("ERROR", "Failed to get stock: " .. tostring(result))
         return nil
     end
 end
 
--- Client-side Performance Features
+-- Client-side Features (FIXED)
 local function setupClientFeatures()
-    -- Anti-idle for client
-    local VirtualUser = game:GetService("VirtualUser")
-    Players.LocalPlayer.Idled:Connect(function()
-        VirtualUser:CaptureController()
-        VirtualUser:ClickButton2(Vector2.new())
-        log("DEBUG", "Anti-idle activated")
+    -- Anti-idle
+    pcall(function()
+        local VirtualUser = game:GetService("VirtualUser")
+        Players.LocalPlayer.Idled:Connect(function()
+            VirtualUser:CaptureController()
+            VirtualUser:ClickButton2(Vector2.new())
+            log("DEBUG", "Anti-idle activated")
+        end)
     end)
     
     -- Handle teleport failures
-    Players.LocalPlayer.OnTeleport:Connect(function(state)
-        if state == Enum.TeleportState.Failed then
-            log("WARN", "Teleport failed - attempting rejoin")
-            cleanupSession()
-            task.wait(3)
-            TeleportService:Teleport(game.PlaceId, Players.LocalPlayer)
-        end
+    pcall(function()
+        Players.LocalPlayer.OnTeleport:Connect(function(state)
+            if state == Enum.TeleportState.Failed then
+                log("WARN", "Teleport failed - rejoining...")
+                cleanupSession()
+                task.wait(3)
+                TeleportService:Teleport(game.PlaceId, Players.LocalPlayer)
+            end
+        end)
     end)
     
     -- Window focus optimization
-    UserInputService.WindowFocusReleased:Connect(function()
-        RunService:Set3dRenderingEnabled(false)
-        log("DEBUG", "Rendering disabled (unfocused)")
-    end)
-    
-    UserInputService.WindowFocused:Connect(function()
-        RunService:Set3dRenderingEnabled(true)
-        log("DEBUG", "Rendering enabled (focused)")
+    pcall(function()
+        UserInputService.WindowFocusReleased:Connect(function()
+            RunService:Set3dRenderingEnabled(false)
+        end)
+        
+        UserInputService.WindowFocused:Connect(function()
+            RunService:Set3dRenderingEnabled(true)
+        end)
     end)
 end
 
--- Client-side Cleanup Handlers
+-- Client-side Cleanup (FIXED - removed BindToClose)
 local function setupCleanupHandlers()
-    -- Handle game closing
-    game:BindToClose(function()
-        log("INFO", "Game closing - cleaning up...")
-        cleanupSession()
-        task.wait(1)
-    end)
-    
-    -- Monitor connection status
-    local connectionMonitor
-    connectionMonitor = RunService.Heartbeat:Connect(function()
-        if not workspace.Parent then
-            log("WARN", "Lost connection - cleaning up")
+    -- Monitor for disconnection
+    local heartbeatConnection
+    heartbeatConnection = RunService.Heartbeat:Connect(function()
+        if not game:IsLoaded() or not Players.LocalPlayer.Parent then
+            log("WARN", "Disconnected - cleaning up")
             cleanupSession()
-            connectionMonitor:Disconnect()
+            if heartbeatConnection then
+                heartbeatConnection:Disconnect()
+            end
         end
     end)
+    
+    -- Player leaving detection
+    pcall(function()
+        Players.PlayerRemoving:Connect(function(player)
+            if player == Players.LocalPlayer then
+                cleanupSession()
+            end
+        end)
+    end)
 end
 
--- Main Monitoring Loop
+-- Main Loop
 local function startMonitoring()
     State.isRunning = true
     State.lastUpdate = os.time()
     
-    log("INFO", "Stock Monitor v2.0 started")
+    log("INFO", "Stock Monitor started")
     log("INFO", "Player: " .. Players.LocalPlayer.Name)
-    log("INFO", "Session: " .. CONFIG.SESSION_ID:sub(1, 8) .. "...")
     notify("Stock Monitor", "Started successfully!", 5)
     
-    -- Test API connection
+    -- Test API
     local success, _ = makeAPIRequest("GET")
     if success then
-        log("INFO", "API connection established")
+        log("INFO", "API connected")
     else
-        log("WARN", "API connection failed - will retry")
+        log("WARN", "API connection failed")
     end
     
-    -- Stats logging interval
-    local statsCounter = 0
+    local updateCount = 0
     
     while State.isRunning do
         local stockData = getFruitStock()
@@ -282,7 +281,6 @@ local function startMonitoring()
             local currentHash = generateStockHash(stockData)
             local timeSinceUpdate = os.time() - State.lastUpdate
             
-            -- Send if data changed or forced update (every 60 seconds)
             if currentHash ~= State.lastStockHash or timeSinceUpdate >= 60 then
                 if sendStockData(stockData) then
                     State.lastStockHash = currentHash
@@ -292,52 +290,46 @@ local function startMonitoring()
                 log("DEBUG", "No changes detected")
             end
         else
-            log("WARN", "Could not retrieve stock data")
+            log("WARN", "Could not get stock data")
         end
         
-        -- Log stats every 30 seconds
-        statsCounter = statsCounter + 1
-        if statsCounter >= 3 then
-            logStats()
-            statsCounter = 0
+        updateCount = updateCount + 1
+        if updateCount >= 6 then -- Every 60 seconds
+            log("INFO", string.format("Updates: %d | Running: %ds", 
+                State.totalUpdates, os.time() - State.lastUpdate))
+            updateCount = 0
         end
         
         task.wait(CONFIG.UPDATE_INTERVAL)
     end
     
-    log("INFO", "Monitoring stopped")
-    notify("Stock Monitor", "Stopped", 5)
+    log("INFO", "Monitor stopped")
     cleanupSession()
 end
 
--- Initialize Everything
+-- Initialize
 local function initialize()
-    log("INFO", "Initializing client-side stock monitor...")
+    log("INFO", "Initializing...")
     
-    -- Check if required services are available
+    -- Check if in Blox Fruits
     if not ReplicatedStorage:FindFirstChild("Remotes") then
-        log("ERROR", "Game remotes not found - wrong game?")
-        notify("Error", "Not in Blox Fruits game!", 10)
+        log("ERROR", "Not in Blox Fruits game!")
+        notify("Error", "Wrong game!", 10)
         return
     end
     
     setupClientFeatures()
     setupCleanupHandlers()
     
-    -- Start monitoring
+    -- Start in new thread
     task.spawn(startMonitoring)
-    
-    log("INFO", "Initialization complete")
 end
 
--- Auto-start
-initialize()
-
--- Manual control functions (for debugging)
+-- Manual controls
 _G.StockMonitor = {
     stop = function()
         State.isRunning = false
-        log("INFO", "Manual stop requested")
+        log("INFO", "Manually stopped")
     end,
     
     restart = function()
@@ -347,14 +339,13 @@ _G.StockMonitor = {
     end,
     
     status = function()
-        logStats()
+        print("Running:", State.isRunning)
+        print("Updates:", State.totalUpdates)
+        print("Session:", CONFIG.SESSION_ID:sub(1, 8))
         return State
-    end,
-    
-    forceUpdate = function()
-        State.lastStockHash = ""
-        log("INFO", "Forced update requested")
     end
 }
 
-log("INFO", "Use _G.StockMonitor.stop() to stop manually")
+-- Start everything
+initialize()
+log("INFO", "Use _G.StockMonitor.stop() to stop")
