@@ -1,4 +1,4 @@
--- SIMPLE BLOX FRUITS STOCK MONITOR
+-- SIMPLE BLOX FRUITS STOCK MONITOR - WITH 10 SECOND PINGS
 print("🍎 Simple Blox Fruits Monitor Starting...")
 
 -- Configuration
@@ -6,6 +6,7 @@ local API_ENDPOINT = "https://gagdata.vercel.app/stock/bloxfruits"
 local DELETE_ENDPOINT = "https://gagdata.vercel.app/api/delete/bloxfruits"
 local API_KEY = "GAMERSBERGXBLOXFRUITS"
 local CHECK_INTERVAL = 1
+local PING_INTERVAL = 10  -- Send ping every 10 seconds
 
 -- Services
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
@@ -17,7 +18,8 @@ local UserInputService = game:GetService("UserInputService")
 local Cache = {
     sessionId = tostring(os.time()) .. "_" .. tostring(math.random(1000, 9999)),
     updateCounter = 0,
-    lastHeartbeat = 0,
+    pingCounter = 0,
+    lastPing = 0,
     normalStock = {},
     mirageStock = {}
 }
@@ -106,24 +108,37 @@ local function sendToAPI(data)
     return success
 end
 
--- Send heartbeat
-local function sendHeartbeat()
-    pcall(function()
+-- Send ping every 10 seconds
+local function sendPing()
+    local success = pcall(function()
+        Cache.pingCounter = Cache.pingCounter + 1
+        
         local request = (syn and syn.request) or http_request or request
         request({
-            Url = API_ENDPOINT .. "/heartbeat",
+            Url = API_ENDPOINT .. "/ping",
             Method = "POST",
             Headers = {
+                ["Content-Type"] = "application/json",
                 ["Authorization"] = API_KEY,
                 ["X-Session-ID"] = Cache.sessionId
             },
             Body = HttpService:JSONEncode({
                 sessionId = Cache.sessionId,
                 status = "ALIVE",
-                timestamp = os.time()
+                timestamp = os.time(),
+                pingNumber = Cache.pingCounter,
+                game = "BloxFruits"
             })
         })
     end)
+    
+    if success then
+        print("📡 Ping #" .. Cache.pingCounter .. " sent")
+    else
+        print("❌ Ping failed")
+    end
+    
+    return success
 end
 
 -- Check for changes
@@ -158,7 +173,7 @@ local function setupCrashDetection()
     end)
     
     UserInputService.WindowFocusReleased:Connect(function()
-        sendHeartbeat()
+        sendPing()  -- Send ping when window loses focus
     end)
 end
 
@@ -174,6 +189,7 @@ end
 -- Main function
 local function startMonitoring()
     print("Monitor Started | Session: " .. Cache.sessionId)
+    print("📡 Pings will be sent every " .. PING_INTERVAL .. " seconds")
     
     setupAntiAFK()
     setupCrashDetection()
@@ -182,10 +198,10 @@ local function startMonitoring()
     local initialData = collectData()
     Cache.normalStock = initialData.normalStock
     Cache.mirageStock = initialData.mirageStock
-    Cache.lastHeartbeat = os.time()
+    Cache.lastPing = os.time()
     
     sendToAPI(initialData)
-    sendHeartbeat()
+    sendPing()  -- Send initial ping
     
     -- Main loop
     while true do
@@ -200,24 +216,22 @@ local function startMonitoring()
                 currentData.normalStock, currentData.mirageStock
             )
             
-            -- Send if changes or every 5 minutes
-            if changes or (currentTime - Cache.lastHeartbeat) >= 300 then
+            -- Send if changes detected
+            if changes then
                 if sendToAPI(currentData) then
                     Cache.normalStock = currentData.normalStock
                     Cache.mirageStock = currentData.mirageStock
                     
-                    if changes then
-                        print("Update #" .. Cache.updateCounter .. " - Changes detected")
-                        print("Normal: " .. #currentData.normalStock .. " fruits")
-                        print("Mirage: " .. #currentData.mirageStock .. " fruits")
-                    end
+                    print("Update #" .. Cache.updateCounter .. " - Changes detected")
+                    print("Normal: " .. #currentData.normalStock .. " fruits")
+                    print("Mirage: " .. #currentData.mirageStock .. " fruits")
                 end
             end
             
-            -- Heartbeat every 10 seconds
-            if (currentTime - Cache.lastHeartbeat) >= 10 then
-                sendHeartbeat()
-                Cache.lastHeartbeat = currentTime
+            -- Send ping every 10 seconds
+            if (currentTime - Cache.lastPing) >= PING_INTERVAL then
+                sendPing()
+                Cache.lastPing = currentTime
             end
             
         else
