@@ -1,396 +1,266 @@
--- BLOX FRUITS STOCK MONITOR - PROPER API STRUCTURE
-print("🍎 Blox Fruits Monitor Starting - PROPER API VERSION...")
-
--- Configuration
-local API_ENDPOINT = "https://gagdata.vercel.app/stock/bloxfruits"
-local API_KEY = "GAMERSBERGXBLOXFRUITS"
-local CHECK_INTERVAL = 1
-local PING_INTERVAL = 10
-local STATUS_CHECK_INTERVAL = 30
-
--- Services
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local HttpService = game:GetService("HttpService")
 local Players = game:GetService("Players")
+local RunService = game:GetService("RunService")
+local TeleportService = game:GetService("TeleportService")
 local UserInputService = game:GetService("UserInputService")
 
--- Cache
-local Cache = {
-    sessionId = tostring(os.time()) .. "_" .. tostring(math.random(1000, 9999)),
-    updateCounter = 0,
-    pingCounter = 0,
-    lastPing = 0,
-    lastStatusCheck = 0,
-    normalStock = {},
-    mirageStock = {},
-    apiOnline = false
+-- Configuration
+local CONFIG = {
+    API_URL = "https://bfdata.vercel.app/api/stocks/bloxfruits",
+    AUTH_HEADER = "GAMERSBERGBLOXFRUITS",
+    UPDATE_INTERVAL = 10, -- seconds
+    RETRY_DELAY = 5,
+    MAX_RETRIES = 3,
+    SESSION_ID = HttpService:GenerateGUID(false)
 }
 
-print("🚀 Session ID: " .. Cache.sessionId)
-print("🚀 Player: " .. Players.LocalPlayer.Name)
-print("🚀 API Endpoint: " .. API_ENDPOINT)
+-- State Management
+local State = {
+    isRunning = false,
+    lastUpdate = 0,
+    retryCount = 0,
+    sessionActive = true,
+    lastStockHash = ""
+}
 
--- GET API Status
-local function getAPIStatus()
-    print("📡 Checking API status...")
-    
-    local success, response = pcall(function()
-        local request = (syn and syn.request) or http_request or request
-        local result = request({
-            Url = API_ENDPOINT,
-            Method = "GET",
-            Headers = {
-                ["Authorization"] = API_KEY,
-                ["X-Session-ID"] = Cache.sessionId
-            }
-        })
-        
-        print("📡 GET Status Code: " .. tostring(result.StatusCode))
-        
-        if result.StatusCode == 200 then
-            local data = HttpService:JSONDecode(result.Body)
-            print("📡 API Response: " .. result.Body)
-            return data
-        else
-            print("❌ GET Request failed with status: " .. tostring(result.StatusCode))
-            return nil
+-- Utility Functions
+local function log(level, message)
+    local timestamp = os.date("%H:%M:%S")
+    print(string.format("[%s] [%s] %s", timestamp, level, message))
+end
+
+local function generateStockHash(stockData)
+    local hashString = ""
+    for stockType, fruits in pairs(stockData) do
+        for _, fruit in pairs(fruits) do
+            if fruit and fruit.OnSale then
+                hashString = hashString .. fruit.Name .. fruit.Price
+            end
         end
+    end
+    return HttpService:JSONEncode({hash = hashString})
+end
+
+local function formatFruitData(fruits)
+    local formattedFruits = {}
+    for _, fruit in pairs(fruits) do
+        if fruit and fruit.OnSale and fruit.Name and fruit.Price then
+            table.insert(formattedFruits, {
+                name = fruit.Name,
+                price = fruit.Price,
+                onSale = fruit.OnSale
+            })
+        end
+    end
+    return formattedFruits
+end
+
+-- API Communication
+local function makeAPIRequest(method, data)
+    local success, response = pcall(function()
+        local requestData = {
+            Url = CONFIG.API_URL,
+            Method = method,
+            Headers = {
+                ["Authorization"] = CONFIG.AUTH_HEADER,
+                ["Content-Type"] = "application/json",
+                ["X-Session-ID"] = CONFIG.SESSION_ID
+            }
+        }
+        
+        if data and (method == "POST" or method == "PUT") then
+            requestData.Body = HttpService:JSONEncode(data)
+        end
+        
+        local request = (syn and syn.request) or http_request or request
+        return request(requestData)
     end)
     
     if success and response then
-        Cache.apiOnline = response.success or false
-        print("✅ API Status: " .. (Cache.apiOnline and "ONLINE" or "OFFLINE"))
-        if response.meta then
-            print("📊 Server Time: " .. tostring(response.meta.serverTime))
-            print("📊 Data Version: " .. tostring(response.meta.dataVersion))
-            print("📊 Last Update: " .. tostring(response.meta.lastUpdateTime))
+        if response.StatusCode >= 200 and response.StatusCode < 300 then
+            State.retryCount = 0
+            return true, response.Body
+        else
+            log("ERROR", "API request failed with status: " .. tostring(response.StatusCode))
+            return false, response.Body
         end
-        return response
     else
-        print("❌ Failed to get API status:", response)
-        Cache.apiOnline = false
-        return nil
+        log("ERROR", "Request failed: " .. tostring(response))
+        return false, nil
     end
 end
 
--- Get fruit stock from game
+local function sendStockData(stockData)
+    local payload = {
+        sessionId = CONFIG.SESSION_ID,
+        timestamp = os.time(),
+        normalStock = formatFruitData(stockData.normal),
+        mirageStock = formatFruitData(stockData.mirage),
+        playerName = Players.LocalPlayer.Name,
+        serverId = game.JobId
+    }
+    
+    local success, responseBody = makeAPIRequest("POST", payload)
+    
+    if success then
+        log("INFO", "Stock data sent successfully")
+        return true
+    else
+        State.retryCount = State.retryCount + 1
+        log("WARN", string.format("Failed to send data (attempt %d/%d)", State.retryCount, CONFIG.MAX_RETRIES))
+        
+        if State.retryCount >= CONFIG.MAX_RETRIES then
+            log("ERROR", "Max retries reached, stopping monitor")
+            State.isRunning = false
+        end
+        return false
+    end
+end
+
+local function cleanupSession()
+    if not State.sessionActive then return end
+    
+    log("INFO", "Cleaning up session...")
+    local success, _ = makeAPIRequest("DELETE", {
+        sessionId = CONFIG.SESSION_ID,
+        reason = "disconnect"
+    })
+    
+    if success then
+        log("INFO", "Session cleanup successful")
+    else
+        log("WARN", "Session cleanup failed")
+    end
+    
+    State.sessionActive = false
+end
+
+-- Game Data Functions
 local function getFruitStock()
-    print("🔍 Getting fruit stock from game...")
     local success, result = pcall(function()
         local CommF = ReplicatedStorage.Remotes.CommF_
-        local normalStock = CommF:InvokeServer("GetFruits", false)
-        local mirageStock = CommF:InvokeServer("GetFruits", true)
-        
-        print("🔍 Raw Normal Stock: " .. tostring(#(normalStock or {})) .. " items")
-        print("🔍 Raw Mirage Stock: " .. tostring(#(mirageStock or {})) .. " items")
-        
         return {
-            normal = normalStock or {},
-            mirage = mirageStock or {}
+            normal = CommF:InvokeServer("GetFruits", false),
+            mirage = CommF:InvokeServer("GetFruits", true)
         }
     end)
     
     if success then
-        print("✅ Successfully retrieved fruit stock from game")
         return result
     else
-        print("❌ Failed to get fruit stock from game:", result)
-        return {normal = {}, mirage = {}}
+        log("ERROR", "Failed to get fruit stock: " .. tostring(result))
+        return nil
     end
 end
 
--- Process fruits for API
-local function processFruits(fruits, stockType)
-    print("📊 Processing " .. stockType .. " fruits...")
-    local processed = {}
-    local count = 0
-    
-    for _, fruit in pairs(fruits) do
-        if fruit and fruit.OnSale and fruit.Name and fruit.Price then
-            local fruitData = {
-                name = fruit.Name,
-                price = fruit.Price,
-                onSale = fruit.OnSale,
-                stockType = stockType
-            }
-            table.insert(processed, fruitData)
-            count = count + 1
-            print("🍎 " .. stockType .. ": " .. fruit.Name .. " - $" .. tostring(fruit.Price))
-        end
-    end
-    
-    print("📊 Processed " .. count .. " " .. stockType .. " fruits")
-    return processed
-end
-
--- Collect all data
-local function collectAllData()
-    print("📦 Collecting all data...")
-    local stock = getFruitStock()
-    
-    local normalFruits = processFruits(stock.normal, "normal")
-    local mirageFruits = processFruits(stock.mirage, "mirage")
-    
-    local data = {
-        sessionId = Cache.sessionId,
-        timestamp = os.time(),
-        updateNumber = Cache.updateCounter + 1,
-        playerName = Players.LocalPlayer.Name,
-        userId = Players.LocalPlayer.UserId,
-        game = "BloxFruits",
-        
-        -- Stock data
-        normalStock = normalFruits,
-        mirageStock = mirageFruits,
-        
-        -- Metadata
-        totalNormalFruits = #normalFruits,
-        totalMirageFruits = #mirageFruits,
-        totalFruits = #normalFruits + #mirageFruits
-    }
-    
-    print("📦 Data collected:")
-    print("   - Normal fruits: " .. #normalFruits)
-    print("   - Mirage fruits: " .. #mirageFruits)
-    print("   - Total fruits: " .. data.totalFruits)
-    
-    return data
-end
-
--- POST data to API
-local function postDataToAPI(data)
-    print("📤 Posting data to API...")
-    
-    local success, response = pcall(function()
-        Cache.updateCounter = Cache.updateCounter + 1
-        data.updateNumber = Cache.updateCounter
-        
-        local jsonStr = HttpService:JSONEncode(data)
-        print("📤 JSON Size: " .. string.len(jsonStr) .. " characters")
-        print("📤 JSON Preview: " .. string.sub(jsonStr, 1, 300) .. "...")
-        
-        local request = (syn and syn.request) or http_request or request
-        local result = request({
-            Url = API_ENDPOINT,
-            Method = "POST",
-            Headers = {
-                ["Content-Type"] = "application/json",
-                ["Authorization"] = API_KEY,
-                ["X-Session-ID"] = Cache.sessionId,
-                ["X-Update-Number"] = tostring(Cache.updateCounter),
-                ["Cache-Control"] = "no-cache, no-store, must-revalidate"
-            },
-            Body = jsonStr
-        })
-        
-        print("📤 POST Status Code: " .. tostring(result.StatusCode))
-        print("📤 POST Response: " .. tostring(result.Body))
-        
-        return result
-    end)
-    
-    if success and response then
-        if response.StatusCode == 200 or response.StatusCode == 201 then
-            print("✅ Data posted successfully!")
-            return true
-        else
-            print("❌ POST failed with status: " .. tostring(response.StatusCode))
-            return false
-        end
-    else
-        print("❌ POST request failed:", response)
-        return false
-    end
-end
-
--- Send ping to API
-local function sendPingToAPI()
-    print("📡 Sending ping to API...")
-    
-    local success, response = pcall(function()
-        Cache.pingCounter = Cache.pingCounter + 1
-        
-        local pingData = {
-            sessionId = Cache.sessionId,
-            status = "ALIVE",
-            timestamp = os.time(),
-            pingNumber = Cache.pingCounter,
-            game = "BloxFruits",
-            playerName = Players.LocalPlayer.Name
-        }
-        
-        local request = (syn and syn.request) or http_request or request
-        local result = request({
-            Url = API_ENDPOINT .. "/ping",
-            Method = "POST",
-            Headers = {
-                ["Content-Type"] = "application/json",
-                ["Authorization"] = API_KEY,
-                ["X-Session-ID"] = Cache.sessionId
-            },
-            Body = HttpService:JSONEncode(pingData)
-        })
-        
-        print("📡 PING Status Code: " .. tostring(result.StatusCode))
-        print("📡 PING Response: " .. tostring(result.Body))
-        
-        return result
-    end)
-    
-    if success and response then
-        if response.StatusCode == 200 or response.StatusCode == 201 then
-            print("✅ Ping #" .. Cache.pingCounter .. " sent successfully!")
-            return true
-        else
-            print("❌ Ping failed with status: " .. tostring(response.StatusCode))
-            return false
-        end
-    else
-        print("❌ Ping request failed:", response)
-        return false
-    end
-end
-
--- Check for stock changes
-local function hasStockChanged(oldNormal, oldMirage, newNormal, newMirage)
-    print("🔍 Checking for stock changes...")
-    
-    -- Count check
-    if #oldNormal ~= #newNormal or #oldMirage ~= #newMirage then
-        print("🔄 Stock count changed!")
-        print("   - Normal: " .. #oldNormal .. " -> " .. #newNormal)
-        print("   - Mirage: " .. #oldMirage .. " -> " .. #newMirage)
-        return true
-    end
-    
-    -- Content check for normal stock
-    for i, newFruit in ipairs(newNormal) do
-        local oldFruit = oldNormal[i]
-        if not oldFruit or oldFruit.name ~= newFruit.name or oldFruit.price ~= newFruit.price then
-            print("🔄 Normal stock changed: " .. newFruit.name .. " ($" .. newFruit.price .. ")")
-            return true
-        end
-    end
-    
-    -- Content check for mirage stock
-    for i, newFruit in ipairs(newMirage) do
-        local oldFruit = oldMirage[i]
-        if not oldFruit or oldFruit.name ~= newFruit.name or oldFruit.price ~= newFruit.price then
-            print("🔄 Mirage stock changed: " .. newFruit.name .. " ($" .. newFruit.price .. ")")
-            return true
-        end
-    end
-    
-    print("✅ No stock changes detected")
-    return false
-end
-
--- Anti-AFK system
-local function setupAntiAFK()
-    print("🔄 Setting up Anti-AFK...")
+-- Performance Optimization
+local function setupPerformanceFeatures()
+    -- Anti-idle
     local VirtualUser = game:GetService("VirtualUser")
     Players.LocalPlayer.Idled:Connect(function()
-        print("🔄 Anti-AFK triggered - preventing idle kick")
         VirtualUser:CaptureController()
         VirtualUser:ClickButton2(Vector2.new())
+        log("INFO", "Anti-idle triggered")
     end)
-    print("✅ Anti-AFK setup complete")
+    
+    -- Auto-rejoin on teleport failure
+    Players.LocalPlayer.OnTeleport:Connect(function(state)
+        if state == Enum.TeleportState.Failed then
+            log("INFO", "Teleport failed, rejoining...")
+            cleanupSession()
+            task.wait(5)
+            TeleportService:Teleport(game.PlaceId, Players.LocalPlayer)
+        end
+    end)
+    
+    -- Performance optimization when window loses focus
+    UserInputService.WindowFocusReleased:Connect(function()
+        RunService:Set3dRenderingEnabled(false)
+        log("INFO", "Rendering disabled (window unfocused)")
+    end)
+    
+    UserInputService.WindowFocused:Connect(function()
+        RunService:Set3dRenderingEnabled(true)
+        log("INFO", "Rendering enabled (window focused)")
+    end)
 end
 
--- Main monitoring function
+-- Cleanup Handlers
+local function setupCleanupHandlers()
+    -- Handle game shutdown
+    game:BindToClose(function()
+        log("INFO", "Game closing, cleaning up...")
+        cleanupSession()
+        task.wait(2) -- Give time for cleanup request
+    end)
+    
+    -- Handle player leaving
+    Players.PlayerRemoving:Connect(function(player)
+        if player == Players.LocalPlayer then
+            cleanupSession()
+        end
+    end)
+    
+    -- Handle connection loss
+    local heartbeatConnection
+    heartbeatConnection = RunService.Heartbeat:Connect(function()
+        if not game:GetService("NetworkClient"):IsConnected() then
+            log("WARN", "Connection lost, cleaning up...")
+            cleanupSession()
+            heartbeatConnection:Disconnect()
+        end
+    end)
+end
+
+-- Main Monitoring Loop
 local function startMonitoring()
-    print("🚀 Starting Blox Fruits Stock Monitor...")
-    print("=" .. string.rep("=", 50))
+    State.isRunning = true
+    log("INFO", "Stock monitor started")
+    log("INFO", "Session ID: " .. CONFIG.SESSION_ID)
     
-    setupAntiAFK()
-    
-    -- Initial API status check
-    print("🔍 Performing initial API status check...")
-    getAPIStatus()
-    
-    -- Initial data collection
-    print("📦 Collecting initial data...")
-    local initialData = collectAllData()
-    Cache.normalStock = initialData.normalStock
-    Cache.mirageStock = initialData.mirageStock
-    Cache.lastPing = os.time()
-    Cache.lastStatusCheck = os.time()
-    
-    -- Send initial data
-    print("📤 Sending initial data to API...")
-    if postDataToAPI(initialData) then
-        print("✅ Initial data sent successfully!")
-    else
-        print("❌ Failed to send initial data!")
+    -- Initial API ping
+    local success, _ = makeAPIRequest("GET")
+    if not success then
+        log("ERROR", "Failed to connect to API, retrying...")
     end
     
-    -- Send initial ping
-    print("📡 Sending initial ping...")
-    if sendPingToAPI() then
-        print("✅ Initial ping sent successfully!")
-    else
-        print("❌ Failed to send initial ping!")
-    end
-    
-    print("🔄 Starting main monitoring loop...")
-    print("=" .. string.rep("=", 50))
-    
-    -- MAIN MONITORING LOOP
-    while true do
-        local success, currentData = pcall(collectAllData)
+    while State.isRunning do
+        local stockData = getFruitStock()
         
-        if success then
-            local currentTime = os.time()
+        if stockData then
+            local currentHash = generateStockHash(stockData)
             
-            -- Check for stock changes
-            local hasChanges = hasStockChanged(
-                Cache.normalStock, Cache.mirageStock,
-                currentData.normalStock, currentData.mirageStock
-            )
-            
-            -- Send data if changes detected
-            if hasChanges then
-                print("🔄 Stock changes detected - sending update...")
-                if postDataToAPI(currentData) then
-                    Cache.normalStock = currentData.normalStock
-                    Cache.mirageStock = currentData.mirageStock
-                    print("✅ Update #" .. Cache.updateCounter .. " sent successfully!")
-                else
-                    print("❌ Failed to send update #" .. Cache.updateCounter)
+            -- Only send if data changed or it's been more than 60 seconds
+            if currentHash ~= State.lastStockHash or (os.time() - State.lastUpdate) >= 60 then
+                if sendStockData(stockData) then
+                    State.lastStockHash = currentHash
+                    State.lastUpdate = os.time()
                 end
+            else
+                log("DEBUG", "No stock changes detected")
             end
-            
-            -- Send ping every 10 seconds
-            if (currentTime - Cache.lastPing) >= PING_INTERVAL then
-                print("📡 Time for ping (" .. PING_INTERVAL .. "s interval)")
-                if sendPingToAPI() then
-                    Cache.lastPing = currentTime
-                else
-                    print("❌ Ping failed, will retry next cycle")
-                end
-            end
-            
-            -- Check API status every 30 seconds
-            if (currentTime - Cache.lastStatusCheck) >= STATUS_CHECK_INTERVAL then
-                print("📡 Time for status check (" .. STATUS_CHECK_INTERVAL .. "s interval)")
-                getAPIStatus()
-                Cache.lastStatusCheck = currentTime
-            end
-            
         else
-            print("❌ Error in main monitoring loop:", currentData)
-            print("💥 Stopping monitor due to critical error")
-            break
+            log("WARN", "Failed to retrieve stock data")
         end
         
-        wait(CHECK_INTERVAL)
+        task.wait(CONFIG.UPDATE_INTERVAL)
     end
+    
+    log("INFO", "Monitoring stopped")
+    cleanupSession()
 end
 
--- Start monitoring with error handling
-print("🍎 Initializing Blox Fruits Stock Monitor...")
-local success, error = pcall(startMonitoring)
-if not success then
-    print("💥 CRITICAL ERROR in monitor:", error)
-    print("🔄 Monitor stopped")
+-- Initialize and Start
+local function initialize()
+    log("INFO", "Initializing Blox Fruits Stock Monitor v2.0")
+    
+    setupPerformanceFeatures()
+    setupCleanupHandlers()
+    
+    -- Start monitoring in a separate thread
+    task.spawn(startMonitoring)
 end
+
+-- Start the monitor
+initialize()
