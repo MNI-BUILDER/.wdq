@@ -1,12 +1,11 @@
--- SIMPLE BLOX FRUITS STOCK MONITOR - WITH 10 SECOND PINGS
-print("🍎 Simple Blox Fruits Monitor Starting...")
+-- FIXED SIMPLE BLOX FRUITS STOCK MONITOR - NO DELETE ENDPOINT
+print("🍎 FIXED Blox Fruits Monitor Starting...")
 
 -- Configuration
 local API_ENDPOINT = "https://gagdata.vercel.app/stock/bloxfruits"
-local DELETE_ENDPOINT = "https://gagdata.vercel.app/api/delete/bloxfruits"
 local API_KEY = "GAMERSBERGXBLOXFRUITS"
 local CHECK_INTERVAL = 1
-local PING_INTERVAL = 10  -- Send ping every 10 seconds
+local PING_INTERVAL = 10
 
 -- Services
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
@@ -24,29 +23,11 @@ local Cache = {
     mirageStock = {}
 }
 
--- AUTO-DELETE on crash
-local function autoDeleteOnCrash()
-    pcall(function()
-        local request = (syn and syn.request) or http_request or request
-        request({
-            Url = DELETE_ENDPOINT,
-            Method = "POST",
-            Headers = {
-                ["Content-Type"] = "application/json",
-                ["Authorization"] = API_KEY,
-                ["X-Session-ID"] = Cache.sessionId
-            },
-            Body = HttpService:JSONEncode({
-                action = "DELETE_ALL",
-                sessionId = Cache.sessionId,
-                timestamp = os.time()
-            })
-        })
-    end)
-end
+print("Session ID: " .. Cache.sessionId)
 
 -- Get fruit stock
 local function getFruitStock()
+    print("🔍 Getting fruit stock...")
     local success, result = pcall(function()
         local CommF = ReplicatedStorage.Remotes.CommF_
         return {
@@ -55,66 +36,109 @@ local function getFruitStock()
         }
     end)
     
-    return success and result or {normal = {}, mirage = {}}
+    if success then
+        print("✅ Got fruit stock successfully")
+        return result
+    else
+        print("❌ Failed to get fruit stock:", result)
+        return {normal = {}, mirage = {}}
+    end
 end
 
 -- Process fruits (simple)
 local function processFruits(fruits)
     local processed = {}
+    local count = 0
+    
     for _, fruit in pairs(fruits) do
         if fruit and fruit.OnSale and fruit.Name and fruit.Price then
             table.insert(processed, {
                 name = fruit.Name,
                 price = fruit.Price
             })
+            count = count + 1
         end
     end
+    
+    print("📊 Processed " .. count .. " fruits")
     return processed
 end
 
 -- Collect data
 local function collectData()
+    print("📦 Collecting data...")
     local stock = getFruitStock()
     
-    return {
+    local normalFruits = processFruits(stock.normal)
+    local mirageFruits = processFruits(stock.mirage)
+    
+    local data = {
         sessionId = Cache.sessionId,
         timestamp = os.time(),
         updateNumber = Cache.updateCounter + 1,
         playerName = Players.LocalPlayer.Name,
-        normalStock = processFruits(stock.normal),
-        mirageStock = processFruits(stock.mirage)
+        normalStock = normalFruits,
+        mirageStock = mirageFruits
     }
+    
+    print("📦 Data collected - Normal: " .. #normalFruits .. ", Mirage: " .. #mirageFruits)
+    return data
 end
 
 -- Send to API
 local function sendToAPI(data)
-    local success = pcall(function()
+    print("📤 Sending to API...")
+    
+    local success, response = pcall(function()
         Cache.updateCounter = Cache.updateCounter + 1
         data.updateNumber = Cache.updateCounter
         
+        local jsonStr = HttpService:JSONEncode(data)
+        print("📤 JSON Data: " .. string.sub(jsonStr, 1, 200) .. "...")
+        
         local request = (syn and syn.request) or http_request or request
-        request({
-            Url = API_ENDPOINT .. "?t=" .. os.time(),
+        local result = request({
+            Url = API_ENDPOINT,
             Method = "POST",
             Headers = {
                 ["Content-Type"] = "application/json",
                 ["Authorization"] = API_KEY,
-                ["X-Session-ID"] = Cache.sessionId
+                ["X-Session-ID"] = Cache.sessionId,
+                ["Cache-Control"] = "no-cache"
             },
-            Body = HttpService:JSONEncode(data)
+            Body = jsonStr
         })
+        
+        print("📤 API Response Status: " .. tostring(result.StatusCode))
+        return result
     end)
     
-    return success
+    if success then
+        print("✅ API request successful!")
+        return true
+    else
+        print("❌ API request failed:", response)
+        return false
+    end
 end
 
--- Send ping every 10 seconds
+-- Send ping
 local function sendPing()
-    local success = pcall(function()
+    print("📡 Sending ping...")
+    
+    local success, response = pcall(function()
         Cache.pingCounter = Cache.pingCounter + 1
         
+        local pingData = {
+            sessionId = Cache.sessionId,
+            status = "ALIVE",
+            timestamp = os.time(),
+            pingNumber = Cache.pingCounter,
+            game = "BloxFruits"
+        }
+        
         local request = (syn and syn.request) or http_request or request
-        request({
+        local result = request({
             Url = API_ENDPOINT .. "/ping",
             Method = "POST",
             Headers = {
@@ -122,34 +146,33 @@ local function sendPing()
                 ["Authorization"] = API_KEY,
                 ["X-Session-ID"] = Cache.sessionId
             },
-            Body = HttpService:JSONEncode({
-                sessionId = Cache.sessionId,
-                status = "ALIVE",
-                timestamp = os.time(),
-                pingNumber = Cache.pingCounter,
-                game = "BloxFruits"
-            })
+            Body = HttpService:JSONEncode(pingData)
         })
+        
+        print("📡 Ping Response Status: " .. tostring(result.StatusCode))
+        return result
     end)
     
     if success then
-        print("📡 Ping #" .. Cache.pingCounter .. " sent")
+        print("✅ Ping #" .. Cache.pingCounter .. " sent successfully!")
+        return true
     else
-        print("❌ Ping failed")
+        print("❌ Ping failed:", response)
+        return false
     end
-    
-    return success
 end
 
 -- Check for changes
 local function hasChanges(oldNormal, oldMirage, newNormal, newMirage)
     if #oldNormal ~= #newNormal or #oldMirage ~= #newMirage then
+        print("🔄 Stock count changed!")
         return true
     end
     
     for i, newFruit in ipairs(newNormal) do
         local oldFruit = oldNormal[i]
         if not oldFruit or oldFruit.name ~= newFruit.name or oldFruit.price ~= newFruit.price then
+            print("🔄 Normal stock changed: " .. newFruit.name)
             return true
         end
     end
@@ -157,6 +180,7 @@ local function hasChanges(oldNormal, oldMirage, newNormal, newMirage)
     for i, newFruit in ipairs(newMirage) do
         local oldFruit = oldMirage[i]
         if not oldFruit or oldFruit.name ~= newFruit.name or oldFruit.price ~= newFruit.price then
+            print("🔄 Mirage stock changed: " .. newFruit.name)
             return true
         end
     end
@@ -164,23 +188,11 @@ local function hasChanges(oldNormal, oldMirage, newNormal, newMirage)
     return false
 end
 
--- Setup crash detection
-local function setupCrashDetection()
-    Players.LocalPlayer.AncestryChanged:Connect(function()
-        if not Players.LocalPlayer.Parent then
-            autoDeleteOnCrash()
-        end
-    end)
-    
-    UserInputService.WindowFocusReleased:Connect(function()
-        sendPing()  -- Send ping when window loses focus
-    end)
-end
-
 -- Anti-AFK
 local function setupAntiAFK()
     local VirtualUser = game:GetService("VirtualUser")
     Players.LocalPlayer.Idled:Connect(function()
+        print("🔄 Anti-AFK triggered")
         VirtualUser:CaptureController()
         VirtualUser:ClickButton2(Vector2.new())
     end)
@@ -188,11 +200,12 @@ end
 
 -- Main function
 local function startMonitoring()
-    print("Monitor Started | Session: " .. Cache.sessionId)
-    print("📡 Pings will be sent every " .. PING_INTERVAL .. " seconds")
+    print("🚀 FIXED Monitor Started!")
+    print("📋 Session: " .. Cache.sessionId)
+    print("📋 Player: " .. Players.LocalPlayer.Name)
+    print("📋 API: " .. API_ENDPOINT)
     
     setupAntiAFK()
-    setupCrashDetection()
     
     -- Initial data
     local initialData = collectData()
@@ -200,8 +213,23 @@ local function startMonitoring()
     Cache.mirageStock = initialData.mirageStock
     Cache.lastPing = os.time()
     
-    sendToAPI(initialData)
-    sendPing()  -- Send initial ping
+    -- Send initial data
+    print("📤 Sending initial data...")
+    if sendToAPI(initialData) then
+        print("✅ Initial data sent successfully!")
+    else
+        print("❌ Failed to send initial data!")
+    end
+    
+    -- Send initial ping
+    print("📡 Sending initial ping...")
+    if sendPing() then
+        print("✅ Initial ping sent successfully!")
+    else
+        print("❌ Failed to send initial ping!")
+    end
+    
+    print("🔄 Starting main loop...")
     
     -- Main loop
     while true do
@@ -218,25 +246,29 @@ local function startMonitoring()
             
             -- Send if changes detected
             if changes then
+                print("🔄 Changes detected, sending update...")
                 if sendToAPI(currentData) then
                     Cache.normalStock = currentData.normalStock
                     Cache.mirageStock = currentData.mirageStock
-                    
-                    print("Update #" .. Cache.updateCounter .. " - Changes detected")
-                    print("Normal: " .. #currentData.normalStock .. " fruits")
-                    print("Mirage: " .. #currentData.mirageStock .. " fruits")
+                    print("✅ Update #" .. Cache.updateCounter .. " sent!")
+                    print("📊 Normal: " .. #currentData.normalStock .. " fruits")
+                    print("📊 Mirage: " .. #currentData.mirageStock .. " fruits")
+                else
+                    print("❌ Failed to send update!")
                 end
             end
             
             -- Send ping every 10 seconds
             if (currentTime - Cache.lastPing) >= PING_INTERVAL then
-                sendPing()
-                Cache.lastPing = currentTime
+                if sendPing() then
+                    Cache.lastPing = currentTime
+                else
+                    print("❌ Ping failed, will retry...")
+                end
             end
             
         else
-            print("Error:", currentData)
-            autoDeleteOnCrash()
+            print("❌ Error in main loop:", currentData)
             break
         end
         
@@ -244,4 +276,8 @@ local function startMonitoring()
     end
 end
 
-startMonitoring()
+-- Start with error handling
+local success, error = pcall(startMonitoring)
+if not success then
+    print("💥 CRITICAL ERROR:", error)
+end
