@@ -15,11 +15,13 @@ local CONFIG = {
     MAX_RETRIES = 3,
     SESSION_ID = HttpService:GenerateGUID(false),
     
-    -- Anti-AFK Settings
-    ANTI_AFK_MIN_INTERVAL = 120, -- 2 minutes minimum
-    ANTI_AFK_MAX_INTERVAL = 300, -- 5 minutes maximum
-    MOVEMENT_DISTANCE = 5, -- studs to move
-    TOOL_USE_CHANCE = 0.3 -- 30% chance to use tool
+    -- Enhanced Anti-AFK Settings
+    ANTI_AFK_MIN_INTERVAL = 60,  -- 1 minute minimum
+    ANTI_AFK_MAX_INTERVAL = 180, -- 3 minutes maximum
+    MOVEMENT_DISTANCE = 15,      -- increased movement range
+    TOOL_USE_CHANCE = 0.7,       -- 70% chance to use tool
+    WALK_DURATION = 3,           -- seconds to walk
+    EMERGENCY_AFK_TIME = 1080    -- 18 minutes (before 20min kick)
 }
 
 -- State Management
@@ -31,7 +33,9 @@ local State = {
     lastStockHash = "",
     totalUpdates = 0,
     lastAntiAfk = 0,
-    nextAntiAfk = 0
+    nextAntiAfk = 0,
+    lastActivity = os.time(),
+    emergencyMode = false
 }
 
 -- Client-side Logging Functions
@@ -53,15 +57,17 @@ local function log(level, message)
     
     if level == "ERROR" then
         notify("Stock Monitor Error", message, 8)
-    elseif level == "INFO" and (string.find(message, "started") or string.find(message, "successful")) then
-        notify("Stock Monitor", message, 5)
+    elseif level == "INFO" and (string.find(message, "started") or string.find(message, "Anti-AFK")) then
+        notify("Anti-AFK", message, 5)
     end
 end
 
--- Advanced Anti-AFK System
-local function getRandomMovementVector()
-    local angle = math.random() * math.pi * 2
-    local distance = math.random(2, CONFIG.MOVEMENT_DISTANCE)
+-- Enhanced Anti-AFK System
+local function getRandomWalkDirection()
+    local angles = {0, 45, 90, 135, 180, 225, 270, 315}
+    local angle = math.rad(angles[math.random(1, #angles)])
+    local distance = math.random(5, CONFIG.MOVEMENT_DISTANCE)
+    
     return Vector3.new(
         math.cos(angle) * distance,
         0,
@@ -69,24 +75,7 @@ local function getRandomMovementVector()
     )
 end
 
-local function getRandomTool()
-    local backpack = Players.LocalPlayer:FindFirstChild("Backpack")
-    if not backpack then return nil end
-    
-    local tools = {}
-    for _, item in pairs(backpack:GetChildren()) do
-        if item:IsA("Tool") then
-            table.insert(tools, item)
-        end
-    end
-    
-    if #tools > 0 then
-        return tools[math.random(1, #tools)]
-    end
-    return nil
-end
-
-local function performNaturalMovement()
+local function performWalkMovement()
     local character = Players.LocalPlayer.Character
     if not character then return false end
     
@@ -95,46 +84,129 @@ local function performNaturalMovement()
     
     if not humanoid or not rootPart then return false end
     
-    -- Random movement pattern
-    local movementType = math.random(1, 4)
+    -- Get current position
+    local currentPosition = rootPart.Position
+    local walkDirection = getRandomWalkDirection()
+    local targetPosition = currentPosition + walkDirection
+    
+    -- Start walking
+    humanoid:MoveTo(targetPosition)
+    log("DEBUG", string.format("Walking to position: %.1f, %.1f, %.1f", 
+        targetPosition.X, targetPosition.Y, targetPosition.Z))
+    
+    -- Walk for random duration
+    local walkTime = math.random(2, CONFIG.WALK_DURATION)
+    task.wait(walkTime)
+    
+    -- Stop walking by moving to current position
+    humanoid:MoveTo(rootPart.Position)
+    
+    return true
+end
+
+local function performComplexMovement()
+    local character = Players.LocalPlayer.Character
+    if not character then return false end
+    
+    local humanoid = character:FindFirstChild("Humanoid")
+    local rootPart = character:FindFirstChild("HumanoidRootPart")
+    
+    if not humanoid or not rootPart then return false end
+    
+    local movementType = math.random(1, 6)
     
     if movementType == 1 then
-        -- Small walk in random direction
-        local moveVector = getRandomMovementVector()
-        local targetPosition = rootPart.Position + moveVector
-        humanoid:MoveTo(targetPosition)
-        log("DEBUG", "Anti-AFK: Walking to new position")
+        -- Walk in a small circle
+        local center = rootPart.Position
+        for i = 1, 8 do
+            local angle = (i / 8) * math.pi * 2
+            local offset = Vector3.new(math.cos(angle) * 5, 0, math.sin(angle) * 5)
+            humanoid:MoveTo(center + offset)
+            task.wait(0.5)
+        end
+        log("DEBUG", "Anti-AFK: Circular walk completed")
         
     elseif movementType == 2 then
-        -- Jump in place
-        humanoid.Jump = true
-        log("DEBUG", "Anti-AFK: Jumping")
+        -- Walk back and forth
+        local startPos = rootPart.Position
+        local direction = getRandomWalkDirection()
+        
+        humanoid:MoveTo(startPos + direction)
+        task.wait(2)
+        humanoid:MoveTo(startPos - direction)
+        task.wait(2)
+        humanoid:MoveTo(startPos)
+        log("DEBUG", "Anti-AFK: Back and forth walk")
         
     elseif movementType == 3 then
-        -- Turn around (rotate)
-        local currentCFrame = rootPart.CFrame
-        local randomRotation = math.random(-180, 180)
-        rootPart.CFrame = currentCFrame * CFrame.Angles(0, math.rad(randomRotation), 0)
-        log("DEBUG", "Anti-AFK: Rotating")
+        -- Jump while walking
+        performWalkMovement()
+        task.wait(0.5)
+        humanoid.Jump = true
+        task.wait(1)
+        humanoid.Jump = true
+        log("DEBUG", "Anti-AFK: Jump walk")
         
     elseif movementType == 4 then
-        -- Crouch (if possible)
-        pcall(function()
-            humanoid.PlatformStand = true
-            task.wait(0.5)
-            humanoid.PlatformStand = false
-        end)
-        log("DEBUG", "Anti-AFK: Crouching")
+        -- Spin and walk
+        local currentCFrame = rootPart.CFrame
+        for i = 1, 4 do
+            rootPart.CFrame = currentCFrame * CFrame.Angles(0, math.rad(90 * i), 0)
+            task.wait(0.3)
+        end
+        performWalkMovement()
+        log("DEBUG", "Anti-AFK: Spin and walk")
+        
+    elseif movementType == 5 then
+        -- Random direction changes
+        for i = 1, 5 do
+            local direction = getRandomWalkDirection()
+            humanoid:MoveTo(rootPart.Position + direction)
+            task.wait(math.random(1, 2))
+        end
+        log("DEBUG", "Anti-AFK: Random direction walk")
+        
+    else
+        -- Simple walk
+        performWalkMovement()
+        log("DEBUG", "Anti-AFK: Simple walk")
     end
     
     return true
 end
 
-local function useRandomTool()
-    if math.random() > CONFIG.TOOL_USE_CHANCE then return false end
+local function getAllTools()
+    local tools = {}
+    local backpack = Players.LocalPlayer:FindFirstChild("Backpack")
+    local character = Players.LocalPlayer.Character
     
-    local tool = getRandomTool()
-    if not tool then return false end
+    -- Get tools from backpack
+    if backpack then
+        for _, item in pairs(backpack:GetChildren()) do
+            if item:IsA("Tool") then
+                table.insert(tools, item)
+            end
+        end
+    end
+    
+    -- Get equipped tools
+    if character then
+        for _, item in pairs(character:GetChildren()) do
+            if item:IsA("Tool") then
+                table.insert(tools, item)
+            end
+        end
+    end
+    
+    return tools
+end
+
+local function useToolAdvanced()
+    local tools = getAllTools()
+    if #tools == 0 then 
+        log("DEBUG", "No tools available")
+        return false 
+    end
     
     local character = Players.LocalPlayer.Character
     if not character then return false end
@@ -142,53 +214,108 @@ local function useRandomTool()
     local humanoid = character:FindFirstChild("Humanoid")
     if not humanoid then return false end
     
+    -- Select random tool
+    local tool = tools[math.random(1, #tools)]
+    
     pcall(function()
-        -- Equip tool
-        humanoid:EquipTool(tool)
-        log("DEBUG", "Anti-AFK: Equipped " .. tool.Name)
-        
-        -- Wait a bit then activate it
-        task.wait(math.random(1, 3))
+        -- Equip tool if not already equipped
+        if tool.Parent ~= character then
+            humanoid:EquipTool(tool)
+            task.wait(math.random(1, 2))
+        end
         
         if tool.Parent == character then
-            tool:Activate()
-            log("DEBUG", "Anti-AFK: Used " .. tool.Name)
+            log("DEBUG", "Using tool: " .. tool.Name)
             
-            -- Wait then unequip
-            task.wait(math.random(2, 5))
-            humanoid:UnequipTools()
-            log("DEBUG", "Anti-AFK: Unequipped tool")
+            -- Use tool multiple times with movement
+            for i = 1, math.random(2, 5) do
+                tool:Activate()
+                task.wait(math.random(0.5, 1.5))
+                
+                -- Sometimes move while using tool
+                if math.random() > 0.5 then
+                    local humanoid = character:FindFirstChild("Humanoid")
+                    local rootPart = character:FindFirstChild("HumanoidRootPart")
+                    if humanoid and rootPart then
+                        local moveDir = getRandomWalkDirection()
+                        humanoid:MoveTo(rootPart.Position + moveDir * 0.3)
+                    end
+                end
+            end
+            
+            -- Keep tool equipped for a bit longer
+            task.wait(math.random(3, 8))
+            
+            -- Sometimes unequip, sometimes keep it
+            if math.random() > 0.3 then
+                humanoid:UnequipTools()
+                log("DEBUG", "Unequipped " .. tool.Name)
+            else
+                log("DEBUG", "Keeping " .. tool.Name .. " equipped")
+            end
         end
     end)
     
     return true
 end
 
+local function emergencyAntiAfk()
+    log("WARN", "Emergency Anti-AFK activated!")
+    notify("Anti-AFK", "Emergency mode activated!", 8)
+    
+    -- Perform multiple actions rapidly
+    for i = 1, 3 do
+        performComplexMovement()
+        task.wait(1)
+        useToolAdvanced()
+        task.wait(2)
+    end
+    
+    -- Reset activity timer
+    State.lastActivity = os.time()
+    State.emergencyMode = false
+    log("INFO", "Emergency Anti-AFK completed")
+end
+
 local function performAntiAfk()
     local currentTime = os.time()
     
-    -- Check if it's time for anti-AFK
+    -- Check for emergency mode (18+ minutes of inactivity)
+    if currentTime - State.lastActivity >= CONFIG.EMERGENCY_AFK_TIME then
+        State.emergencyMode = true
+        emergencyAntiAfk()
+        return
+    end
+    
+    -- Regular anti-AFK check
     if currentTime < State.nextAntiAfk then return end
     
-    log("INFO", "Performing anti-AFK actions...")
+    log("INFO", "Performing enhanced anti-AFK...")
     
-    -- Perform movement
-    local movementSuccess = performNaturalMovement()
-    
-    -- Sometimes use a tool
+    -- Perform complex movement
     task.spawn(function()
-        task.wait(math.random(1, 3)) -- Random delay
-        useRandomTool()
+        performComplexMovement()
     end)
     
-    -- Update timing for next anti-AFK
+    -- Use tools after movement
+    task.spawn(function()
+        task.wait(math.random(2, 5))
+        if math.random() <= CONFIG.TOOL_USE_CHANCE then
+            useToolAdvanced()
+        end
+    end)
+    
+    -- Update activity tracking
+    State.lastActivity = currentTime
     State.lastAntiAfk = currentTime
+    
+    -- Set next anti-AFK time
     local nextInterval = math.random(CONFIG.ANTI_AFK_MIN_INTERVAL, CONFIG.ANTI_AFK_MAX_INTERVAL)
     State.nextAntiAfk = currentTime + nextInterval
     
-    log("INFO", string.format("Next anti-AFK in %d seconds", nextInterval))
-    
-    return movementSuccess
+    local timeUntilEmergency = CONFIG.EMERGENCY_AFK_TIME - (currentTime - State.lastActivity)
+    log("INFO", string.format("Next anti-AFK: %ds | Emergency in: %ds", 
+        nextInterval, math.max(0, timeUntilEmergency)))
 end
 
 -- Utility Functions
@@ -273,7 +400,8 @@ local function sendStockData(stockData)
         mirageStock = mirageStock,
         playerName = Players.LocalPlayer.Name,
         serverId = game.JobId or "unknown",
-        totalFruits = #normalStock + #mirageStock
+        totalFruits = #normalStock + #mirageStock,
+        antiAfkActive = true
     }
     
     local success, responseBody = makeAPIRequest("POST", payload)
@@ -334,12 +462,13 @@ local function getFruitStock()
     end
 end
 
--- Client-side Features (UPDATED)
+-- Client-side Features
 local function setupClientFeatures()
     -- Initialize anti-AFK timing
     local currentTime = os.time()
+    State.lastActivity = currentTime
     State.nextAntiAfk = currentTime + math.random(CONFIG.ANTI_AFK_MIN_INTERVAL, CONFIG.ANTI_AFK_MAX_INTERVAL)
-    log("INFO", "Anti-AFK system initialized")
+    log("INFO", "Enhanced Anti-AFK system initialized")
     
     -- Handle teleport failures
     pcall(function()
@@ -392,9 +521,9 @@ local function startMonitoring()
     State.isRunning = true
     State.lastUpdate = os.time()
     
-    log("INFO", "Stock Monitor with Advanced Anti-AFK started")
+    log("INFO", "Enhanced Stock Monitor with Advanced Anti-AFK started")
     log("INFO", "Player: " .. Players.LocalPlayer.Name)
-    notify("Stock Monitor", "Started with Anti-AFK!", 5)
+    notify("Stock Monitor", "Enhanced Anti-AFK Active!", 5)
     
     local success, _ = makeAPIRequest("GET")
     if success then
@@ -406,7 +535,7 @@ local function startMonitoring()
     local updateCount = 0
     
     while State.isRunning do
-        -- Perform anti-AFK check
+        -- Perform enhanced anti-AFK check
         performAntiAfk()
         
         -- Get and send stock data
@@ -431,8 +560,9 @@ local function startMonitoring()
         updateCount = updateCount + 1
         if updateCount >= 6 then
             local nextAfkIn = State.nextAntiAfk - os.time()
-            log("INFO", string.format("Updates: %d | Next Anti-AFK: %ds", 
-                State.totalUpdates, math.max(0, nextAfkIn)))
+            local timeSinceActivity = os.time() - State.lastActivity
+            log("INFO", string.format("Updates: %d | Next Anti-AFK: %ds | Activity: %ds ago", 
+                State.totalUpdates, math.max(0, nextAfkIn), timeSinceActivity))
             updateCount = 0
         end
         
@@ -445,7 +575,7 @@ end
 
 -- Initialize
 local function initialize()
-    log("INFO", "Initializing Advanced Stock Monitor...")
+    log("INFO", "Initializing Enhanced Stock Monitor...")
     
     if not ReplicatedStorage:FindFirstChild("Remotes") then
         log("ERROR", "Not in Blox Fruits game!")
@@ -473,9 +603,14 @@ _G.StockMonitor = {
     end,
     
     status = function()
+        local timeSinceActivity = os.time() - State.lastActivity
+        local nextAfkIn = State.nextAntiAfk - os.time()
+        
         print("Running:", State.isRunning)
         print("Updates:", State.totalUpdates)
-        print("Next Anti-AFK:", State.nextAntiAfk - os.time(), "seconds")
+        print("Time since activity:", timeSinceActivity, "seconds")
+        print("Next Anti-AFK in:", math.max(0, nextAfkIn), "seconds")
+        print("Emergency mode:", State.emergencyMode)
         print("Session:", CONFIG.SESSION_ID:sub(1, 8))
         return State
     end,
@@ -483,9 +618,15 @@ _G.StockMonitor = {
     forceAntiAfk = function()
         State.nextAntiAfk = 0
         log("INFO", "Forced anti-AFK trigger")
+    end,
+    
+    emergencyTest = function()
+        emergencyAntiAfk()
+        log("INFO", "Emergency anti-AFK test completed")
     end
 }
 
 -- Start everything
 initialize()
-log("INFO", "Use _G.StockMonitor.forceAntiAfk() to test anti-AFK")
+log("INFO", "Enhanced Anti-AFK prevents 20min kick!")
+log("INFO", "Use _G.StockMonitor.emergencyTest() to test emergency mode")
