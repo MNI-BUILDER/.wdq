@@ -8,20 +8,20 @@ local StarterGui = game:GetService("StarterGui")
 
 -- Configuration
 local CONFIG = {
-    API_URL = "https://bloxfritushit.vercel.app/api/stocks/bloxfruits",
-    AUTH_HEADER = "GAMERSBERG",
+    API_URL = "https://bfdata.vercel.app/api/stocks/bloxfruits",
+    AUTH_HEADER = "GAMERSBERGBLOXFRUITS",
     UPDATE_INTERVAL = 10,
     RETRY_DELAY = 5,
     MAX_RETRIES = 3,
     SESSION_ID = HttpService:GenerateGUID(false),
     
-    -- Enhanced Anti-AFK Settings
-    ANTI_AFK_MIN_INTERVAL = 60,  -- 1 minute minimum
-    ANTI_AFK_MAX_INTERVAL = 180, -- 3 minutes maximum
-    MOVEMENT_DISTANCE = 15,      -- increased movement range
-    TOOL_USE_CHANCE = 0.7,       -- 70% chance to use tool
-    WALK_DURATION = 3,           -- seconds to walk
-    EMERGENCY_AFK_TIME = 1080    -- 18 minutes (before 20min kick)
+    -- Anti-AFK Settings
+    ANTI_AFK_MIN_INTERVAL = 60,
+    ANTI_AFK_MAX_INTERVAL = 180,
+    MOVEMENT_DISTANCE = 15,
+    TOOL_USE_CHANCE = 0.7,
+    WALK_DURATION = 3,
+    EMERGENCY_AFK_TIME = 1080
 }
 
 -- State Management
@@ -35,330 +35,303 @@ local State = {
     lastAntiAfk = 0,
     nextAntiAfk = 0,
     lastActivity = os.time(),
-    emergencyMode = false
+    emergencyMode = false,
+    connections = {}
 }
 
--- Client-side Logging Functions
+-- Safe Logging Functions
 local function notify(title, text, duration)
-    pcall(function()
+    local success = pcall(function()
         StarterGui:SetCore("SendNotification", {
-            Title = title,
-            Text = text,
-            Duration = duration or 5
+            Title = tostring(title),
+            Text = tostring(text),
+            Duration = tonumber(duration) or 5
         })
     end)
+    if not success then
+        print("Notification failed:", title, text)
+    end
 end
 
 local function log(level, message)
-    local timestamp = os.date("%H:%M:%S")
-    local logMessage = string.format("[%s] [%s] %s", timestamp, level, message)
-    
-    print(logMessage)
-    
-    if level == "ERROR" then
-        notify("Stock Monitor Error", message, 8)
-    elseif level == "INFO" and (string.find(message, "started") or string.find(message, "Anti-AFK")) then
-        notify("Anti-AFK", message, 5)
+    local success = pcall(function()
+        local timestamp = os.date("%H:%M:%S")
+        local logMessage = string.format("[%s] [%s] %s", timestamp, tostring(level), tostring(message))
+        print(logMessage)
+        
+        if level == "ERROR" then
+            notify("Monitor Error", message, 8)
+        elseif level == "INFO" and (string.find(tostring(message), "started") or string.find(tostring(message), "Anti-AFK")) then
+            notify("Monitor", message, 5)
+        end
+    end)
+    if not success then
+        print("Log failed:", level, message)
     end
 end
 
--- Enhanced Anti-AFK System
+-- Safe Movement Functions
 local function getRandomWalkDirection()
-    local angles = {0, 45, 90, 135, 180, 225, 270, 315}
-    local angle = math.rad(angles[math.random(1, #angles)])
-    local distance = math.random(5, CONFIG.MOVEMENT_DISTANCE)
+    local success, result = pcall(function()
+        local angles = {0, 45, 90, 135, 180, 225, 270, 315}
+        local angle = math.rad(angles[math.random(1, #angles)])
+        local distance = math.random(5, CONFIG.MOVEMENT_DISTANCE)
+        
+        return Vector3.new(
+            math.cos(angle) * distance,
+            0,
+            math.sin(angle) * distance
+        )
+    end)
     
-    return Vector3.new(
-        math.cos(angle) * distance,
-        0,
-        math.sin(angle) * distance
-    )
+    if success and result then
+        return result
+    else
+        return Vector3.new(5, 0, 5) -- fallback
+    end
 end
 
-local function performWalkMovement()
-    local character = Players.LocalPlayer.Character
-    if not character then return false end
-    
-    local humanoid = character:FindFirstChild("Humanoid")
-    local rootPart = character:FindFirstChild("HumanoidRootPart")
-    
-    if not humanoid or not rootPart then return false end
-    
-    -- Get current position
-    local currentPosition = rootPart.Position
-    local walkDirection = getRandomWalkDirection()
-    local targetPosition = currentPosition + walkDirection
-    
-    -- Start walking
-    humanoid:MoveTo(targetPosition)
-    log("DEBUG", string.format("Walking to position: %.1f, %.1f, %.1f", 
-        targetPosition.X, targetPosition.Y, targetPosition.Z))
-    
-    -- Walk for random duration
-    local walkTime = math.random(2, CONFIG.WALK_DURATION)
-    task.wait(walkTime)
-    
-    -- Stop walking by moving to current position
-    humanoid:MoveTo(rootPart.Position)
-    
-    return true
-end
-
-local function performComplexMovement()
-    local character = Players.LocalPlayer.Character
-    if not character then return false end
-    
-    local humanoid = character:FindFirstChild("Humanoid")
-    local rootPart = character:FindFirstChild("HumanoidRootPart")
-    
-    if not humanoid or not rootPart then return false end
-    
-    local movementType = math.random(1, 6)
-    
-    if movementType == 1 then
-        -- Walk in a small circle
-        local center = rootPart.Position
-        for i = 1, 8 do
-            local angle = (i / 8) * math.pi * 2
-            local offset = Vector3.new(math.cos(angle) * 5, 0, math.sin(angle) * 5)
-            humanoid:MoveTo(center + offset)
-            task.wait(0.5)
-        end
-        log("DEBUG", "Anti-AFK: Circular walk completed")
+local function performSafeMovement()
+    local success = pcall(function()
+        local character = Players.LocalPlayer.Character
+        if not character then return false end
         
-    elseif movementType == 2 then
-        -- Walk back and forth
-        local startPos = rootPart.Position
-        local direction = getRandomWalkDirection()
+        local humanoid = character:FindFirstChild("Humanoid")
+        local rootPart = character:FindFirstChild("HumanoidRootPart")
         
-        humanoid:MoveTo(startPos + direction)
-        task.wait(2)
-        humanoid:MoveTo(startPos - direction)
-        task.wait(2)
-        humanoid:MoveTo(startPos)
-        log("DEBUG", "Anti-AFK: Back and forth walk")
+        if not humanoid or not rootPart then return false end
         
-    elseif movementType == 3 then
-        -- Jump while walking
-        performWalkMovement()
-        task.wait(0.5)
-        humanoid.Jump = true
-        task.wait(1)
-        humanoid.Jump = true
-        log("DEBUG", "Anti-AFK: Jump walk")
+        local movementType = math.random(1, 4)
         
-    elseif movementType == 4 then
-        -- Spin and walk
-        local currentCFrame = rootPart.CFrame
-        for i = 1, 4 do
-            rootPart.CFrame = currentCFrame * CFrame.Angles(0, math.rad(90 * i), 0)
-            task.wait(0.3)
-        end
-        performWalkMovement()
-        log("DEBUG", "Anti-AFK: Spin and walk")
-        
-    elseif movementType == 5 then
-        -- Random direction changes
-        for i = 1, 5 do
+        if movementType == 1 then
+            -- Simple walk
+            local direction = getRandomWalkDirection()
+            local targetPosition = rootPart.Position + direction
+            humanoid:MoveTo(targetPosition)
+            task.wait(math.random(2, CONFIG.WALK_DURATION))
+            humanoid:MoveTo(rootPart.Position)
+            log("DEBUG", "Anti-AFK: Walk movement")
+            
+        elseif movementType == 2 then
+            -- Jump movement
+            humanoid.Jump = true
+            task.wait(1)
             local direction = getRandomWalkDirection()
             humanoid:MoveTo(rootPart.Position + direction)
-            task.wait(math.random(1, 2))
+            task.wait(2)
+            log("DEBUG", "Anti-AFK: Jump movement")
+            
+        elseif movementType == 3 then
+            -- Rotation
+            local currentCFrame = rootPart.CFrame
+            local rotation = math.random(-180, 180)
+            rootPart.CFrame = currentCFrame * CFrame.Angles(0, math.rad(rotation), 0)
+            task.wait(1)
+            log("DEBUG", "Anti-AFK: Rotation")
+            
+        else
+            -- Back and forth
+            local startPos = rootPart.Position
+            local direction = getRandomWalkDirection()
+            humanoid:MoveTo(startPos + direction)
+            task.wait(2)
+            humanoid:MoveTo(startPos)
+            task.wait(1)
+            log("DEBUG", "Anti-AFK: Back and forth")
         end
-        log("DEBUG", "Anti-AFK: Random direction walk")
         
-    else
-        -- Simple walk
-        performWalkMovement()
-        log("DEBUG", "Anti-AFK: Simple walk")
-    end
+        return true
+    end)
     
+    if not success then
+        log("WARN", "Movement failed, using fallback")
+        return false
+    end
     return true
 end
 
-local function getAllTools()
-    local tools = {}
-    local backpack = Players.LocalPlayer:FindFirstChild("Backpack")
-    local character = Players.LocalPlayer.Character
-    
-    -- Get tools from backpack
-    if backpack then
+local function useSafeTool()
+    local success = pcall(function()
+        local character = Players.LocalPlayer.Character
+        local backpack = Players.LocalPlayer:FindFirstChild("Backpack")
+        
+        if not character or not backpack then return false end
+        
+        local humanoid = character:FindFirstChild("Humanoid")
+        if not humanoid then return false end
+        
+        -- Get available tools
+        local tools = {}
         for _, item in pairs(backpack:GetChildren()) do
             if item:IsA("Tool") then
                 table.insert(tools, item)
             end
         end
-    end
-    
-    -- Get equipped tools
-    if character then
-        for _, item in pairs(character:GetChildren()) do
-            if item:IsA("Tool") then
-                table.insert(tools, item)
-            end
-        end
-    end
-    
-    return tools
-end
-
-local function useToolAdvanced()
-    local tools = getAllTools()
-    if #tools == 0 then 
-        log("DEBUG", "No tools available")
-        return false 
-    end
-    
-    local character = Players.LocalPlayer.Character
-    if not character then return false end
-    
-    local humanoid = character:FindFirstChild("Humanoid")
-    if not humanoid then return false end
-    
-    -- Select random tool
-    local tool = tools[math.random(1, #tools)]
-    
-    pcall(function()
-        -- Equip tool if not already equipped
-        if tool.Parent ~= character then
-            humanoid:EquipTool(tool)
-            task.wait(math.random(1, 2))
-        end
+        
+        if #tools == 0 then return false end
+        
+        local tool = tools[math.random(1, #tools)]
+        
+        -- Equip and use tool safely
+        humanoid:EquipTool(tool)
+        task.wait(math.random(1, 2))
         
         if tool.Parent == character then
-            log("DEBUG", "Using tool: " .. tool.Name)
-            
-            -- Use tool multiple times with movement
-            for i = 1, math.random(2, 5) do
+            for i = 1, math.random(2, 4) do
                 tool:Activate()
-                task.wait(math.random(0.5, 1.5))
-                
-                -- Sometimes move while using tool
-                if math.random() > 0.5 then
-                    local humanoid = character:FindFirstChild("Humanoid")
-                    local rootPart = character:FindFirstChild("HumanoidRootPart")
-                    if humanoid and rootPart then
-                        local moveDir = getRandomWalkDirection()
-                        humanoid:MoveTo(rootPart.Position + moveDir * 0.3)
-                    end
-                end
+                task.wait(math.random(0.5, 1))
             end
             
-            -- Keep tool equipped for a bit longer
-            task.wait(math.random(3, 8))
+            task.wait(math.random(2, 5))
             
-            -- Sometimes unequip, sometimes keep it
-            if math.random() > 0.3 then
+            if math.random() > 0.5 then
                 humanoid:UnequipTools()
-                log("DEBUG", "Unequipped " .. tool.Name)
-            else
-                log("DEBUG", "Keeping " .. tool.Name .. " equipped")
             end
+            
+            log("DEBUG", "Anti-AFK: Used tool " .. tool.Name)
+            return true
         end
+        
+        return false
     end)
+    
+    return success
+end
+
+local function performAntiAfk()
+    local success = pcall(function()
+        local currentTime = os.time()
+        
+        -- Emergency mode check
+        if currentTime - State.lastActivity >= CONFIG.EMERGENCY_AFK_TIME then
+            log("WARN", "Emergency Anti-AFK activated!")
+            notify("Anti-AFK", "Emergency mode!", 8)
+            
+            for i = 1, 3 do
+                performSafeMovement()
+                task.wait(1)
+                useSafeTool()
+                task.wait(2)
+            end
+            
+            State.lastActivity = currentTime
+            State.emergencyMode = false
+            return
+        end
+        
+        -- Regular anti-AFK
+        if currentTime < State.nextAntiAfk then return end
+        
+        log("INFO", "Performing anti-AFK actions...")
+        
+        -- Movement
+        task.spawn(function()
+            performSafeMovement()
+        end)
+        
+        -- Tool usage
+        if math.random() <= CONFIG.TOOL_USE_CHANCE then
+            task.spawn(function()
+                task.wait(math.random(1, 3))
+                useSafeTool()
+            end)
+        end
+        
+        -- Update timers
+        State.lastActivity = currentTime
+        State.lastAntiAfk = currentTime
+        
+        local nextInterval = math.random(CONFIG.ANTI_AFK_MIN_INTERVAL, CONFIG.ANTI_AFK_MAX_INTERVAL)
+        State.nextAntiAfk = currentTime + nextInterval
+        
+        log("INFO", string.format("Next anti-AFK in %d seconds", nextInterval))
+    end)
+    
+    if not success then
+        log("ERROR", "Anti-AFK failed")
+    end
+end
+
+-- Data Management Functions
+local function validateStockData(stockData)
+    if not stockData or type(stockData) ~= "table" then
+        return false
+    end
+    
+    if not stockData.normal or not stockData.mirage then
+        return false
+    end
     
     return true
 end
 
-local function emergencyAntiAfk()
-    log("WARN", "Emergency Anti-AFK activated!")
-    notify("Anti-AFK", "Emergency mode activated!", 8)
-    
-    -- Perform multiple actions rapidly
-    for i = 1, 3 do
-        performComplexMovement()
-        task.wait(1)
-        useToolAdvanced()
-        task.wait(2)
-    end
-    
-    -- Reset activity timer
-    State.lastActivity = os.time()
-    State.emergencyMode = false
-    log("INFO", "Emergency Anti-AFK completed")
-end
-
-local function performAntiAfk()
-    local currentTime = os.time()
-    
-    -- Check for emergency mode (18+ minutes of inactivity)
-    if currentTime - State.lastActivity >= CONFIG.EMERGENCY_AFK_TIME then
-        State.emergencyMode = true
-        emergencyAntiAfk()
-        return
-    end
-    
-    -- Regular anti-AFK check
-    if currentTime < State.nextAntiAfk then return end
-    
-    log("INFO", "Performing enhanced anti-AFK...")
-    
-    -- Perform complex movement
-    task.spawn(function()
-        performComplexMovement()
-    end)
-    
-    -- Use tools after movement
-    task.spawn(function()
-        task.wait(math.random(2, 5))
-        if math.random() <= CONFIG.TOOL_USE_CHANCE then
-            useToolAdvanced()
+local function formatFruitData(fruits)
+    local success, result = pcall(function()
+        local formattedFruits = {}
+        
+        if not fruits or type(fruits) ~= "table" then
+            return formattedFruits
         end
+        
+        for _, fruit in pairs(fruits) do
+            if fruit and type(fruit) == "table" and fruit.OnSale and fruit.Name and fruit.Price then
+                table.insert(formattedFruits, {
+                    name = tostring(fruit.Name),
+                    price = tonumber(fruit.Price) or 0,
+                    onSale = true
+                })
+            end
+        end
+        
+        return formattedFruits
     end)
     
-    -- Update activity tracking
-    State.lastActivity = currentTime
-    State.lastAntiAfk = currentTime
-    
-    -- Set next anti-AFK time
-    local nextInterval = math.random(CONFIG.ANTI_AFK_MIN_INTERVAL, CONFIG.ANTI_AFK_MAX_INTERVAL)
-    State.nextAntiAfk = currentTime + nextInterval
-    
-    local timeUntilEmergency = CONFIG.EMERGENCY_AFK_TIME - (currentTime - State.lastActivity)
-    log("INFO", string.format("Next anti-AFK: %ds | Emergency in: %ds", 
-        nextInterval, math.max(0, timeUntilEmergency)))
+    if success and result then
+        return result
+    else
+        log("WARN", "Failed to format fruit data")
+        return {}
+    end
 end
 
--- Utility Functions
 local function generateStockHash(stockData)
-    local hashString = ""
-    for stockType, fruits in pairs(stockData) do
-        if fruits then
-            for _, fruit in pairs(fruits) do
-                if fruit and fruit.OnSale then
-                    hashString = hashString .. tostring(fruit.Name) .. tostring(fruit.Price)
+    local success, result = pcall(function()
+        if not validateStockData(stockData) then
+            return ""
+        end
+        
+        local hashString = ""
+        for stockType, fruits in pairs(stockData) do
+            if fruits and type(fruits) == "table" then
+                for _, fruit in pairs(fruits) do
+                    if fruit and fruit.OnSale and fruit.Name and fruit.Price then
+                        hashString = hashString .. tostring(fruit.Name) .. tostring(fruit.Price)
+                    end
                 end
             end
         end
-    end
-    return hashString
-end
-
-local function formatFruitData(fruits)
-    local formattedFruits = {}
-    if not fruits then return formattedFruits end
+        
+        return hashString
+    end)
     
-    for _, fruit in pairs(fruits) do
-        if fruit and fruit.OnSale and fruit.Name and fruit.Price then
-            table.insert(formattedFruits, {
-                name = tostring(fruit.Name),
-                price = tonumber(fruit.Price),
-                onSale = true
-            })
-        end
+    if success and result then
+        return result
+    else
+        return ""
     end
-    return formattedFruits
 end
 
--- Client-side HTTP Request Function
+-- API Functions with Data Cleanup
 local function makeAPIRequest(method, data)
     local success, response = pcall(function()
         local requestData = {
             Url = CONFIG.API_URL,
-            Method = method or "GET",
+            Method = tostring(method) or "GET",
             Headers = {
                 ["Authorization"] = CONFIG.AUTH_HEADER,
                 ["Content-Type"] = "application/json",
-                ["X-Session-ID"] = CONFIG.SESSION_ID
+                ["X-Session-ID"] = CONFIG.SESSION_ID,
+                ["X-Replace-Data"] = "true" -- Signal to replace, not append
             }
         }
         
@@ -366,10 +339,9 @@ local function makeAPIRequest(method, data)
             requestData.Body = HttpService:JSONEncode(data)
         end
         
-        local request = http_request or request or syn and syn.request
+        local request = http_request or request or (syn and syn.request)
         if not request then
-            log("ERROR", "No HTTP request function available")
-            return nil
+            error("No HTTP request function available")
         end
         
         return request(requestData)
@@ -389,50 +361,95 @@ local function makeAPIRequest(method, data)
     end
 end
 
-local function sendStockData(stockData)
-    local normalStock = formatFruitData(stockData.normal)
-    local mirageStock = formatFruitData(stockData.mirage)
-    
-    local payload = {
-        sessionId = CONFIG.SESSION_ID,
-        timestamp = os.time(),
-        normalStock = normalStock,
-        mirageStock = mirageStock,
-        playerName = Players.LocalPlayer.Name,
-        serverId = game.JobId or "unknown",
-        totalFruits = #normalStock + #mirageStock,
-        antiAfkActive = true
-    }
-    
-    local success, responseBody = makeAPIRequest("POST", payload)
+local function cleanupOldData()
+    local success = pcall(function()
+        -- Delete old session data first
+        makeAPIRequest("DELETE", {
+            sessionId = CONFIG.SESSION_ID,
+            action = "cleanup_old_data",
+            timestamp = os.time()
+        })
+    end)
     
     if success then
-        State.totalUpdates = State.totalUpdates + 1
-        log("INFO", string.format("Stock sent - Normal: %d, Mirage: %d", #normalStock, #mirageStock))
-        return true
-    else
-        State.retryCount = State.retryCount + 1
-        log("WARN", string.format("Send failed (%d/%d)", State.retryCount, CONFIG.MAX_RETRIES))
-        
-        if State.retryCount >= CONFIG.MAX_RETRIES then
-            log("ERROR", "Max retries reached - stopping")
-            State.isRunning = false
+        log("DEBUG", "Old data cleanup requested")
+    end
+end
+
+local function sendStockData(stockData)
+    local success, result = pcall(function()
+        if not validateStockData(stockData) then
+            log("WARN", "Invalid stock data, skipping send")
+            return false
         end
+        
+        local normalStock = formatFruitData(stockData.normal)
+        local mirageStock = formatFruitData(stockData.mirage)
+        
+        -- Clean old data first
+        cleanupOldData()
+        
+        -- Prepare new data payload
+        local payload = {
+            sessionId = CONFIG.SESSION_ID,
+            timestamp = os.time(),
+            normalStock = normalStock,
+            mirageStock = mirageStock,
+            playerName = tostring(Players.LocalPlayer.Name),
+            serverId = tostring(game.JobId or "unknown"),
+            totalFruits = #normalStock + #mirageStock,
+            antiAfkActive = true,
+            replaceData = true -- Ensure data replacement
+        }
+        
+        local apiSuccess, responseBody = makeAPIRequest("POST", payload)
+        
+        if apiSuccess then
+            State.totalUpdates = State.totalUpdates + 1
+            log("INFO", string.format("Stock data replaced - Normal: %d, Mirage: %d", #normalStock, #mirageStock))
+            return true
+        else
+            State.retryCount = State.retryCount + 1
+            log("WARN", string.format("Send failed (%d/%d)", State.retryCount, CONFIG.MAX_RETRIES))
+            
+            if State.retryCount >= CONFIG.MAX_RETRIES then
+                log("ERROR", "Max retries reached - stopping")
+                State.isRunning = false
+            end
+            return false
+        end
+    end)
+    
+    if success and result then
+        return result
+    else
+        log("ERROR", "Failed to send stock data")
         return false
     end
 end
 
 local function cleanupSession()
-    if not State.sessionActive then return end
-    
-    log("INFO", "Cleaning up session...")
-    pcall(function()
+    local success = pcall(function()
+        if not State.sessionActive then return end
+        
+        log("INFO", "Cleaning up session...")
+        
+        -- Send cleanup request
         makeAPIRequest("DELETE", {
             sessionId = CONFIG.SESSION_ID,
-            reason = "client_disconnect"
+            reason = "client_disconnect",
+            timestamp = os.time(),
+            cleanupAll = true
         })
+        
+        State.sessionActive = false
     end)
-    State.sessionActive = false
+    
+    if success then
+        log("INFO", "Session cleanup completed")
+    else
+        log("WARN", "Session cleanup failed")
+    end
 end
 
 -- Game Data Functions
@@ -448,9 +465,12 @@ local function getFruitStock()
             error("CommF_ not found")
         end
         
+        local normalStock = CommF:InvokeServer("GetFruits", false)
+        local mirageStock = CommF:InvokeServer("GetFruits", true)
+        
         return {
-            normal = CommF:InvokeServer("GetFruits", false),
-            mirage = CommF:InvokeServer("GetFruits", true)
+            normal = normalStock,
+            mirage = mirageStock
         }
     end)
     
@@ -462,17 +482,16 @@ local function getFruitStock()
     end
 end
 
--- Client-side Features
+-- Safe Setup Functions
 local function setupClientFeatures()
-    -- Initialize anti-AFK timing
-    local currentTime = os.time()
-    State.lastActivity = currentTime
-    State.nextAntiAfk = currentTime + math.random(CONFIG.ANTI_AFK_MIN_INTERVAL, CONFIG.ANTI_AFK_MAX_INTERVAL)
-    log("INFO", "Enhanced Anti-AFK system initialized")
-    
-    -- Handle teleport failures
-    pcall(function()
-        Players.LocalPlayer.OnTeleport:Connect(function(state)
+    local success = pcall(function()
+        -- Initialize anti-AFK timing
+        local currentTime = os.time()
+        State.lastActivity = currentTime
+        State.nextAntiAfk = currentTime + math.random(CONFIG.ANTI_AFK_MIN_INTERVAL, CONFIG.ANTI_AFK_MAX_INTERVAL)
+        
+        -- Teleport handling
+        local teleportConnection = Players.LocalPlayer.OnTeleport:Connect(function(state)
             if state == Enum.TeleportState.Failed then
                 log("WARN", "Teleport failed - rejoining...")
                 cleanupSession()
@@ -480,116 +499,150 @@ local function setupClientFeatures()
                 TeleportService:Teleport(game.PlaceId, Players.LocalPlayer)
             end
         end)
-    end)
-    
-    -- Window focus optimization
-    pcall(function()
-        UserInputService.WindowFocusReleased:Connect(function()
+        table.insert(State.connections, teleportConnection)
+        
+        -- Window focus optimization
+        local focusLostConnection = UserInputService.WindowFocusReleased:Connect(function()
             RunService:Set3dRenderingEnabled(false)
         end)
+        table.insert(State.connections, focusLostConnection)
         
-        UserInputService.WindowFocused:Connect(function()
+        local focusGainedConnection = UserInputService.WindowFocused:Connect(function()
             RunService:Set3dRenderingEnabled(true)
         end)
-    end)
-end
-
--- Client-side Cleanup
-local function setupCleanupHandlers()
-    local heartbeatConnection
-    heartbeatConnection = RunService.Heartbeat:Connect(function()
-        if not game:IsLoaded() or not Players.LocalPlayer.Parent then
-            log("WARN", "Disconnected - cleaning up")
-            cleanupSession()
-            if heartbeatConnection then
-                heartbeatConnection:Disconnect()
-            end
-        end
+        table.insert(State.connections, focusGainedConnection)
+        
+        log("INFO", "Client features initialized")
     end)
     
-    pcall(function()
-        Players.PlayerRemoving:Connect(function(player)
-            if player == Players.LocalPlayer then
+    if not success then
+        log("WARN", "Some client features failed to initialize")
+    end
+end
+
+local function setupCleanupHandlers()
+    local success = pcall(function()
+        -- Connection monitor
+        local heartbeatConnection = RunService.Heartbeat:Connect(function()
+            if not game:IsLoaded() or not Players.LocalPlayer.Parent then
+                log("WARN", "Disconnected - cleaning up")
                 cleanupSession()
+                
+                -- Disconnect all connections
+                for _, connection in pairs(State.connections) do
+                    if connection then
+                        connection:Disconnect()
+                    end
+                end
+                State.connections = {}
             end
         end)
+        table.insert(State.connections, heartbeatConnection)
+        
+        log("INFO", "Cleanup handlers initialized")
     end)
+    
+    if not success then
+        log("WARN", "Cleanup handlers failed to initialize")
+    end
 end
 
 -- Main Loop
 local function startMonitoring()
-    State.isRunning = true
-    State.lastUpdate = os.time()
-    
-    log("INFO", "Enhanced Stock Monitor with Advanced Anti-AFK started")
-    log("INFO", "Player: " .. Players.LocalPlayer.Name)
-    notify("Stock Monitor", "Enhanced Anti-AFK Active!", 5)
-    
-    local success, _ = makeAPIRequest("GET")
-    if success then
-        log("INFO", "API connected")
-    else
-        log("WARN", "API connection failed")
-    end
-    
-    local updateCount = 0
-    
-    while State.isRunning do
-        -- Perform enhanced anti-AFK check
-        performAntiAfk()
+    local success = pcall(function()
+        State.isRunning = true
+        State.lastUpdate = os.time()
         
-        -- Get and send stock data
-        local stockData = getFruitStock()
+        log("INFO", "Error-Free Stock Monitor started")
+        log("INFO", "Player: " .. tostring(Players.LocalPlayer.Name))
+        notify("Stock Monitor", "Started with data cleanup!", 5)
         
-        if stockData then
-            local currentHash = generateStockHash(stockData)
-            local timeSinceUpdate = os.time() - State.lastUpdate
+        -- Test API connection
+        local apiSuccess, _ = makeAPIRequest("GET")
+        if apiSuccess then
+            log("INFO", "API connected successfully")
+        else
+            log("WARN", "API connection failed - will retry")
+        end
+        
+        local updateCount = 0
+        
+        while State.isRunning do
+            -- Perform anti-AFK
+            performAntiAfk()
             
-            if currentHash ~= State.lastStockHash or timeSinceUpdate >= 60 then
-                if sendStockData(stockData) then
-                    State.lastStockHash = currentHash
-                    State.lastUpdate = os.time()
+            -- Get and send stock data
+            local stockData = getFruitStock()
+            
+            if stockData and validateStockData(stockData) then
+                local currentHash = generateStockHash(stockData)
+                local timeSinceUpdate = os.time() - State.lastUpdate
+                
+                -- Send if data changed or forced update
+                if currentHash ~= State.lastStockHash or timeSinceUpdate >= 60 then
+                    if sendStockData(stockData) then
+                        State.lastStockHash = currentHash
+                        State.lastUpdate = os.time()
+                    end
+                else
+                    log("DEBUG", "No stock changes detected")
                 end
             else
-                log("DEBUG", "No changes detected")
+                log("WARN", "Could not get valid stock data")
             end
-        else
-            log("WARN", "Could not get stock data")
+            
+            -- Status logging
+            updateCount = updateCount + 1
+            if updateCount >= 6 then
+                local timeSinceActivity = os.time() - State.lastActivity
+                local nextAfkIn = math.max(0, State.nextAntiAfk - os.time())
+                log("INFO", string.format("Updates: %d | Activity: %ds ago | Next AFK: %ds", 
+                    State.totalUpdates, timeSinceActivity, nextAfkIn))
+                updateCount = 0
+            end
+            
+            task.wait(CONFIG.UPDATE_INTERVAL)
         end
         
-        updateCount = updateCount + 1
-        if updateCount >= 6 then
-            local nextAfkIn = State.nextAntiAfk - os.time()
-            local timeSinceActivity = os.time() - State.lastActivity
-            log("INFO", string.format("Updates: %d | Next Anti-AFK: %ds | Activity: %ds ago", 
-                State.totalUpdates, math.max(0, nextAfkIn), timeSinceActivity))
-            updateCount = 0
-        end
-        
-        task.wait(CONFIG.UPDATE_INTERVAL)
-    end
+        log("INFO", "Monitoring stopped")
+        cleanupSession()
+    end)
     
-    log("INFO", "Monitor stopped")
-    cleanupSession()
+    if not success then
+        log("ERROR", "Critical error in main loop")
+        cleanupSession()
+    end
 end
 
 -- Initialize
 local function initialize()
-    log("INFO", "Initializing Enhanced Stock Monitor...")
+    local success = pcall(function()
+        log("INFO", "Initializing Error-Free Monitor...")
+        
+        -- Validate game
+        if not ReplicatedStorage:FindFirstChild("Remotes") then
+            log("ERROR", "Not in Blox Fruits game!")
+            notify("Error", "Wrong game detected!", 10)
+            return
+        end
+        
+        -- Setup features
+        setupClientFeatures()
+        setupCleanupHandlers()
+        
+        -- Start monitoring
+        task.spawn(startMonitoring)
+        
+        log("INFO", "Initialization completed successfully")
+    end)
     
-    if not ReplicatedStorage:FindFirstChild("Remotes") then
-        log("ERROR", "Not in Blox Fruits game!")
-        notify("Error", "Wrong game!", 10)
-        return
+    if not success then
+        log("ERROR", "Initialization failed")
+        notify("Error", "Failed to start monitor", 10)
     end
-    
-    setupClientFeatures()
-    setupCleanupHandlers()
-    
-    task.spawn(startMonitoring)
 end
 
--- Manual controls
+-- Manual Controls
 _G.StockMonitor = {
     stop = function()
         State.isRunning = false
@@ -604,29 +657,30 @@ _G.StockMonitor = {
     
     status = function()
         local timeSinceActivity = os.time() - State.lastActivity
-        local nextAfkIn = State.nextAntiAfk - os.time()
+        local nextAfkIn = math.max(0, State.nextAntiAfk - os.time())
         
+        print("=== Stock Monitor Status ===")
         print("Running:", State.isRunning)
-        print("Updates:", State.totalUpdates)
+        print("Updates sent:", State.totalUpdates)
         print("Time since activity:", timeSinceActivity, "seconds")
-        print("Next Anti-AFK in:", math.max(0, nextAfkIn), "seconds")
-        print("Emergency mode:", State.emergencyMode)
-        print("Session:", CONFIG.SESSION_ID:sub(1, 8))
+        print("Next Anti-AFK in:", nextAfkIn, "seconds")
+        print("Session ID:", CONFIG.SESSION_ID:sub(1, 8) .. "...")
+        print("Connections:", #State.connections)
         return State
     end,
     
-    forceAntiAfk = function()
-        State.nextAntiAfk = 0
-        log("INFO", "Forced anti-AFK trigger")
+    cleanup = function()
+        cleanupSession()
+        log("INFO", "Manual cleanup completed")
     end,
     
-    emergencyTest = function()
-        emergencyAntiAfk()
-        log("INFO", "Emergency anti-AFK test completed")
+    testAntiAfk = function()
+        State.nextAntiAfk = 0
+        log("INFO", "Anti-AFK test triggered")
     end
 }
 
--- Start everything
+-- Start the monitor
 initialize()
-log("INFO", "Enhanced Anti-AFK prevents 20min kick!")
-log("INFO", "Use _G.StockMonitor.emergencyTest() to test emergency mode")
+log("INFO", "Monitor ready! No data stacking - old data gets replaced!")
+log("INFO", "Use _G.StockMonitor.status() for detailed info")
