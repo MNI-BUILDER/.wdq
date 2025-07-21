@@ -8,7 +8,7 @@ local StarterGui = game:GetService("StarterGui")
 
 -- Configuration
 local CONFIG = {
-    API_URL = "https://bfdata.vercel.app/api/stocks/bloxfruits",
+    API_URL = "https://bloxfritushit.vercel.app/api/stocks/bloxfruits",
     AUTH_HEADER = "GAMERSBERGBLOXFRUITS",
     UPDATE_INTERVAL = 10,
     SESSION_ID = HttpService:GenerateGUID(false),
