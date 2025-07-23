@@ -6,217 +6,194 @@ local TeleportService = game:GetService("TeleportService")
 local UserInputService = game:GetService("UserInputService")
 local StarterGui = game:GetService("StarterGui")
 
--- SMART UPDATE CONFIGURATION
+-- Updated Professional Configuration
 local CONFIG = {
     API_URL = "https://bloxfritushit.vercel.app/api/stocks/bloxfruits",
     AUTH_HEADER = "GAMERSBERG",
-    UPDATE_INTERVAL = 8,
-    PING_INTERVAL = 30, -- Send keepalive ping every 30 seconds
-    RETRY_DELAY = 2,
-    MAX_RETRIES = 10,
+    UPDATE_INTERVAL = 10,
+    RETRY_DELAY = 3,
+    MAX_RETRIES = 5,
     SESSION_ID = HttpService:GenerateGUID(false),
+    CLEANUP_TIMEOUT = 5,
     
-    -- ANTI-AFK SETTINGS
-    ANTI_AFK_INTERVAL = 45,
-    MOVEMENT_DISTANCE = 15,
-    TOOL_USE_CHANCE = 0.9,
-    EMERGENCY_AFK_TIME = 900
+    -- Anti-AFK Professional Settings
+    ANTI_AFK_MIN_INTERVAL = 45,
+    ANTI_AFK_MAX_INTERVAL = 120,
+    MOVEMENT_DISTANCE = 12,
+    TOOL_USE_CHANCE = 0.8,
+    WALK_DURATION = 4,
+    EMERGENCY_AFK_TIME = 900 -- 15 minutes
 }
 
--- SMART STATE MANAGEMENT
+-- Professional State Management
 local State = {
     isRunning = false,
     lastUpdate = 0,
-    lastPing = 0,
     retryCount = 0,
     sessionActive = true,
-    lastStockData = nil,
     lastStockHash = "",
     totalUpdates = 0,
-    totalPings = 0,
     lastAntiAfk = 0,
+    nextAntiAfk = 0,
     lastActivity = os.time(),
+    emergencyMode = false,
     connections = {},
-    antiAfkRunning = false,
-    dataChangeDetected = false
+    dataCleanupInProgress = false,
+    lastCleanupTime = 0,
+    apiHealthy = false
 }
 
--- SMART LOGGING
-local function smartLog(level, message, forceNotify)
-    local timestamp = os.date("%H:%M:%S")
-    local logMessage = string.format("[%s][SMART][%s] %s", timestamp, level, tostring(message))
-    print(logMessage)
-    
-    if forceNotify or level == "ERROR" or level == "CRITICAL" or level == "SUCCESS" then
+-- Professional Logging System
+local function safeNotify(title, text, duration)
+    spawn(function()
         pcall(function()
             StarterGui:SetCore("SendNotification", {
-                Title = "[SMART] " .. level,
-                Text = tostring(message),
-                Duration = level == "ERROR" and 10 or 5
+                Title = "[NEW API] " .. tostring(title),
+                Text = tostring(text),
+                Duration = tonumber(duration) or 5
             })
         end)
-    end
-end
-
--- DATA CHANGE DETECTION SYSTEM
-local function generateDataHash(stockData)
-    if not stockData or not stockData.normal or not stockData.mirage then
-        return ""
-    end
-    
-    local hashData = {}
-    
-    -- Process normal stock
-    if stockData.normal and type(stockData.normal) == "table" then
-        for _, fruit in pairs(stockData.normal) do
-            if fruit and fruit.OnSale and fruit.Name and fruit.Price then
-                table.insert(hashData, {
-                    type = "normal",
-                    name = tostring(fruit.Name),
-                    price = tonumber(fruit.Price),
-                    onSale = fruit.OnSale
-                })
-            end
-        end
-    end
-    
-    -- Process mirage stock
-    if stockData.mirage and type(stockData.mirage) == "table" then
-        for _, fruit in pairs(stockData.mirage) do
-            if fruit and fruit.OnSale and fruit.Name and fruit.Price then
-                table.insert(hashData, {
-                    type = "mirage",
-                    name = tostring(fruit.Name),
-                    price = tonumber(fruit.Price),
-                    onSale = fruit.OnSale
-                })
-            end
-        end
-    end
-    
-    -- Sort for consistent hashing
-    table.sort(hashData, function(a, b)
-        if a.type ~= b.type then
-            return a.type < b.type
-        end
-        if a.name ~= b.name then
-            return a.name < b.name
-        end
-        return a.price < b.price
     end)
-    
-    return HttpService:JSONEncode(hashData)
 end
 
-local function detectDataChanges(newStockData)
-    local newHash = generateDataHash(newStockData)
-    
-    if newHash == "" then
-        smartLog("WARN", "Invalid stock data for hash generation")
-        return false
-    end
-    
-    if State.lastStockHash == "" then
-        -- First time data
-        State.lastStockHash = newHash
-        State.lastStockData = newStockData
-        smartLog("INFO", "First stock data detected")
-        return true
-    end
-    
-    if newHash ~= State.lastStockHash then
-        smartLog("SUCCESS", "NEW DATA DETECTED - Changes found!", true)
-        State.lastStockHash = newHash
-        State.lastStockData = newStockData
-        State.dataChangeDetected = true
-        return true
-    end
-    
-    smartLog("DEBUG", "No data changes detected")
-    return false
-end
-
--- API KEEPALIVE PING SYSTEM
-local function sendKeepalivePing()
-    local success = pcall(function()
-        local request = http_request or request or (syn and syn.request)
-        if not request then return false end
-        
-        local pingPayload = {
-            action = "KEEPALIVE",
-            sessionId = CONFIG.SESSION_ID,
-            timestamp = os.time(),
-            playerName = tostring(Players.LocalPlayer.Name),
-            serverId = tostring(game.JobId or "unknown"),
-            status = "ACTIVE"
-        }
-        
-        local response = request({
-            Url = CONFIG.API_URL,
-            Method = "PUT",
-            Headers = {
-                ["Authorization"] = CONFIG.AUTH_HEADER,
-                ["Content-Type"] = "application/json",
-                ["X-Session-ID"] = CONFIG.SESSION_ID,
-                ["X-Action"] = "KEEPALIVE",
-                ["X-Ping"] = "true"
-            },
-            Body = HttpService:JSONEncode(pingPayload)
-        })
-        
-        if response and response.StatusCode and response.StatusCode < 300 then
-            State.totalPings = State.totalPings + 1
-            State.lastPing = os.time()
-            smartLog("DEBUG", "Keepalive ping sent successfully")
-            return true
-        else
-            smartLog("WARN", "Keepalive ping failed: " .. tostring(response and response.StatusCode or "No response"))
-            return false
-        end
+local function professionalLog(level, message, showNotification)
+    spawn(function()
+        pcall(function()
+            local timestamp = os.date("%H:%M:%S")
+            local sessionShort = CONFIG.SESSION_ID:sub(1, 6)
+            local logMessage = string.format("[%s][%s][%s] %s", timestamp, sessionShort, tostring(level), tostring(message))
+            
+            print(logMessage)
+            
+            if showNotification and (level == "ERROR" or level == "CRITICAL") then
+                safeNotify("System " .. level, message, 10)
+            elseif showNotification and level == "SUCCESS" then
+                safeNotify("Success", message, 3)
+            end
+        end)
     end)
-    
-    return success
 end
 
--- COMPLETE DATA REPLACEMENT SYSTEM
-local function replaceDataCompletely(stockData)
-    local success = pcall(function()
-        smartLog("INFO", "REPLACING DATA COMPLETELY...")
+-- API Health Check System
+local function checkApiHealth()
+    local success, result = pcall(function()
+        professionalLog("INFO", "Checking new API health...")
         
         local request = http_request or request or (syn and syn.request)
         if not request then
-            smartLog("CRITICAL", "No HTTP request function available")
-            return false
+            return false, "No HTTP request function"
         end
         
-        -- STEP 1: DELETE ALL OLD DATA
-        local deleteResponse = request({
+        local response = request({
             Url = CONFIG.API_URL,
-            Method = "DELETE",
+            Method = "GET",
             Headers = {
                 ["Authorization"] = CONFIG.AUTH_HEADER,
                 ["Content-Type"] = "application/json",
-                ["X-Session-ID"] = CONFIG.SESSION_ID,
-                ["X-Action"] = "DELETE_ALL"
-            },
-            Body = HttpService:JSONEncode({
-                action = "DELETE_ALL_SESSION_DATA",
-                sessionId = CONFIG.SESSION_ID,
-                force = true
-            })
+                ["X-Health-Check"] = "true"
+            }
         })
         
-        smartLog("DEBUG", "Delete response: " .. tostring(deleteResponse and deleteResponse.StatusCode or "No response"))
+        if response and response.StatusCode then
+            if response.StatusCode == 200 then
+                State.apiHealthy = true
+                professionalLog("SUCCESS", "New API is healthy and responding", true)
+                return true, "API healthy"
+            elseif response.StatusCode == 404 then
+                State.apiHealthy = false
+                professionalLog("WARN", "API endpoint not found (404) - may still be setting up")
+                return false, "Endpoint not found"
+            else
+                State.apiHealthy = false
+                professionalLog("WARN", "API returned status: " .. tostring(response.StatusCode))
+                return false, "API error: " .. tostring(response.StatusCode)
+            end
+        else
+            State.apiHealthy = false
+            return false, "No response from API"
+        end
+    end)
+    
+    if success then
+        return result
+    else
+        State.apiHealthy = false
+        professionalLog("ERROR", "Health check failed: " .. tostring(result))
+        return false, tostring(result)
+    end
+end
+
+-- Enhanced Data Cleanup for New API
+local function executeDataCleanup()
+    if State.dataCleanupInProgress then
+        professionalLog("WARN", "Cleanup already in progress, skipping")
+        return false
+    end
+    
+    State.dataCleanupInProgress = true
+    local cleanupSuccess = false
+    
+    pcall(function()
+        professionalLog("INFO", "Starting complete data cleanup on new API...")
         
-        -- STEP 2: WAIT FOR DELETION TO COMPLETE
-        task.wait(1.5)
+        local deletePayload = {
+            action = "PURGE_SESSION",
+            sessionId = CONFIG.SESSION_ID,
+            timestamp = os.time(),
+            force = true,
+            apiVersion = "NEW"
+        }
         
-        -- STEP 3: FORMAT NEW DATA
+        local request = http_request or request or (syn and syn.request)
+        if request then
+            local deleteResponse = request({
+                Url = CONFIG.API_URL,
+                Method = "DELETE",
+                Headers = {
+                    ["Authorization"] = CONFIG.AUTH_HEADER,
+                    ["Content-Type"] = "application/json",
+                    ["X-Session-ID"] = CONFIG.SESSION_ID,
+                    ["X-Action"] = "PURGE_ALL",
+                    ["X-API-Version"] = "NEW"
+                },
+                Body = HttpService:JSONEncode(deletePayload)
+            })
+            
+            if deleteResponse and deleteResponse.StatusCode then
+                if deleteResponse.StatusCode < 300 then
+                    professionalLog("SUCCESS", "Old data purged from new API")
+                    task.wait(1)
+                    cleanupSuccess = true
+                elseif deleteResponse.StatusCode == 404 then
+                    professionalLog("INFO", "No existing data to cleanup (404)")
+                    cleanupSuccess = true -- 404 means no data exists, which is fine
+                else
+                    professionalLog("ERROR", "Cleanup failed: " .. tostring(deleteResponse.StatusCode))
+                end
+            end
+        end
+    end)
+    
+    State.dataCleanupInProgress = false
+    State.lastCleanupTime = os.time()
+    return cleanupSuccess
+end
+
+local function validateAndFormatStockData(stockData)
+    local success, result = pcall(function()
+        if not stockData or type(stockData) ~= "table" then
+            return nil, "Invalid stock data structure"
+        end
+        
+        if not stockData.normal or not stockData.mirage then
+            return nil, "Missing normal or mirage stock data"
+        end
+        
         local function formatFruits(fruits)
             local formatted = {}
             if fruits and type(fruits) == "table" then
                 for _, fruit in pairs(fruits) do
-                    if fruit and fruit.OnSale and fruit.Name and fruit.Price then
+                    if fruit and type(fruit) == "table" and fruit.OnSale and fruit.Name and fruit.Price then
                         table.insert(formatted, {
                             name = tostring(fruit.Name),
                             price = tonumber(fruit.Price) or 0,
@@ -229,186 +206,337 @@ local function replaceDataCompletely(stockData)
             return formatted
         end
         
-        local normalStock = formatFruits(stockData.normal)
-        local mirageStock = formatFruits(stockData.mirage)
+        local processedData = {
+            normal = formatFruits(stockData.normal),
+            mirage = formatFruits(stockData.mirage),
+            totalCount = 0,
+            processed = true,
+            apiVersion = "NEW"
+        }
         
-        -- STEP 4: SEND COMPLETELY NEW DATA
-        local newDataPayload = {
+        processedData.totalCount = #processedData.normal + #processedData.mirage
+        
+        return processedData, nil
+    end)
+    
+    if success and result then
+        return result, nil
+    else
+        return nil, tostring(result)
+    end
+end
+
+local function professionalDataSend(stockData)
+    local success, result = pcall(function()
+        -- Check API health first
+        if not State.apiHealthy then
+            local healthCheck = checkApiHealth()
+            if not healthCheck then
+                professionalLog("WARN", "API not healthy, skipping data send")
+                return false
+            end
+        end
+        
+        -- Step 1: Validate data
+        local processedData, error = validateAndFormatStockData(stockData)
+        if not processedData then
+            professionalLog("ERROR", "Data validation failed: " .. tostring(error))
+            return false
+        end
+        
+        -- Step 2: Execute cleanup first
+        local cleanupSuccess = executeDataCleanup()
+        if not cleanupSuccess then
+            professionalLog("WARN", "Cleanup failed, proceeding with caution")
+        end
+        
+        -- Step 3: Wait for cleanup to complete
+        task.wait(2)
+        
+        -- Step 4: Send fresh data to new API
+        local payload = {
             sessionId = CONFIG.SESSION_ID,
             timestamp = os.time(),
             playerName = tostring(Players.LocalPlayer.Name),
             serverId = tostring(game.JobId or "unknown"),
-            normalStock = normalStock,
-            mirageStock = mirageStock,
-            totalFruits = #normalStock + #mirageStock,
-            dataVersion = os.time(),
+            
+            -- Stock data
+            normalStock = processedData.normal,
+            mirageStock = processedData.mirage,
+            totalFruits = processedData.totalCount,
+            
+            -- System info
+            antiAfkActive = true,
+            monitorVersion = "2.0-NEW-API",
+            dataFresh = true,
             replaceMode = true,
-            freshData = true
+            apiVersion = "NEW"
         }
         
-        local postResponse = request({
+        local request = http_request or request or (syn and syn.request)
+        if not request then
+            professionalLog("CRITICAL", "No HTTP request function available")
+            return false
+        end
+        
+        local response = request({
             Url = CONFIG.API_URL,
             Method = "POST",
             Headers = {
                 ["Authorization"] = CONFIG.AUTH_HEADER,
                 ["Content-Type"] = "application/json",
                 ["X-Session-ID"] = CONFIG.SESSION_ID,
-                ["X-Data-Mode"] = "REPLACE_ALL",
-                ["X-Fresh-Data"] = "true",
-                ["X-Timestamp"] = tostring(os.time())
+                ["X-Data-Mode"] = "REPLACE",
+                ["X-Timestamp"] = tostring(os.time()),
+                ["X-API-Version"] = "NEW"
             },
-            Body = HttpService:JSONEncode(newDataPayload)
+            Body = HttpService:JSONEncode(payload)
         })
         
-        if postResponse and postResponse.StatusCode and postResponse.StatusCode >= 200 and postResponse.StatusCode < 300 then
-            State.totalUpdates = State.totalUpdates + 1
-            State.lastUpdate = os.time()
-            smartLog("SUCCESS", string.format("DATA COMPLETELY REPLACED - Normal: %d, Mirage: %d", 
-                #normalStock, #mirageStock), true)
-            return true
+        if response and response.StatusCode then
+            if response.StatusCode >= 200 and response.StatusCode < 300 then
+                State.totalUpdates = State.totalUpdates + 1
+                State.apiHealthy = true
+                professionalLog("SUCCESS", string.format("Data sent to NEW API - Normal: %d, Mirage: %d (Total: %d)", 
+                    #processedData.normal, #processedData.mirage, processedData.totalCount), true)
+                return true
+            elseif response.StatusCode == 404 then
+                State.apiHealthy = false
+                professionalLog("ERROR", "New API endpoint not found (404) - check if API is deployed")
+                return false
+            else
+                State.apiHealthy = false
+                professionalLog("ERROR", "New API send failed: " .. tostring(response.StatusCode))
+                return false
+            end
         else
-            smartLog("ERROR", "Failed to send new data: " .. tostring(postResponse and postResponse.StatusCode or "No response"))
+            State.apiHealthy = false
+            professionalLog("ERROR", "No response from new API")
             return false
         end
     end)
     
-    if success then
+    if success and result then
         State.retryCount = 0
         return true
     else
         State.retryCount = State.retryCount + 1
-        smartLog("ERROR", "Data replacement failed, retry: " .. State.retryCount)
+        professionalLog("ERROR", "Send operation failed: " .. tostring(result))
+        
+        if State.retryCount >= CONFIG.MAX_RETRIES then
+            professionalLog("CRITICAL", "Max retries exceeded - stopping monitor", true)
+            State.isRunning = false
+        end
         return false
     end
 end
 
--- SMART ANTI-AFK SYSTEM
-local function executeSmartAntiAfk()
-    if State.antiAfkRunning then return end
-    
-    State.antiAfkRunning = true
-    
-    spawn(function()
-        pcall(function()
-            smartLog("INFO", "Executing smart anti-AFK...")
-            
-            local character = Players.LocalPlayer.Character
-            if not character then
-                State.antiAfkRunning = false
-                return
-            end
-            
-            local humanoid = character:FindFirstChild("Humanoid")
-            local rootPart = character:FindFirstChild("HumanoidRootPart")
-            if not humanoid or not rootPart then
-                State.antiAfkRunning = false
-                return
-            end
-            
-            -- Smart movement pattern
-            local patterns = {
-                function() -- Random walk
-                    for i = 1, 4 do
-                        local angle = math.random() * math.pi * 2
-                        local distance = math.random(8, CONFIG.MOVEMENT_DISTANCE)
-                        local direction = Vector3.new(
-                            math.cos(angle) * distance,
-                            0,
-                            math.sin(angle) * distance
-                        )
-                        humanoid:MoveTo(rootPart.Position + direction)
-                        task.wait(2)
-                    end
-                end,
-                
-                function() -- Circle walk
-                    local center = rootPart.Position
-                    for i = 1, 8 do
-                        local angle = (i / 8) * math.pi * 2
-                        local pos = center + Vector3.new(
-                            math.cos(angle) * 10,
-                            0,
-                            math.sin(angle) * 10
-                        )
-                        humanoid:MoveTo(pos)
-                        task.wait(1)
-                    end
-                end,
-                
-                function() -- Jump and move
-                    for i = 1, 6 do
-                        humanoid.Jump = true
-                        task.wait(0.5)
-                        local angle = math.random() * math.pi * 2
-                        local distance = math.random(5, 12)
-                        local direction = Vector3.new(
-                            math.cos(angle) * distance,
-                            0,
-                            math.sin(angle) * distance
-                        )
-                        humanoid:MoveTo(rootPart.Position + direction)
-                        task.wait(1.5)
-                    end
-                end
-            }
-            
-            -- Execute random pattern
-            local selectedPattern = patterns[math.random(1, #patterns)]
-            selectedPattern()
-            
-            -- Tool usage
-            if math.random() <= CONFIG.TOOL_USE_CHANCE then
-                task.wait(1)
-                local backpack = Players.LocalPlayer:FindFirstChild("Backpack")
-                if backpack then
-                    local tools = {}
-                    for _, item in pairs(backpack:GetChildren()) do
-                        if item:IsA("Tool") then
-                            table.insert(tools, item)
-                        end
-                    end
-                    
-                    if #tools > 0 then
-                        local tool = tools[math.random(1, #tools)]
-                        humanoid:EquipTool(tool)
-                        task.wait(1)
-                        
-                        if tool.Parent == character then
-                            for j = 1, math.random(3, 8) do
-                                tool:Activate()
-                                task.wait(math.random(0.3, 0.8))
-                            end
-                            task.wait(2)
-                            if math.random() > 0.3 then
-                                humanoid:UnequipTools()
-                            end
-                            smartLog("DEBUG", "Used tool: " .. tool.Name)
-                        end
-                    end
-                end
-            end
-            
-            State.lastActivity = os.time()
-            State.lastAntiAfk = os.time()
-            smartLog("SUCCESS", "Smart anti-AFK completed")
-        end)
+-- Professional Anti-AFK System (Same as before)
+local function executeMovementPattern()
+    pcall(function()
+        local character = Players.LocalPlayer.Character
+        if not character then return end
         
-        task.wait(3)
-        State.antiAfkRunning = false
+        local humanoid = character:FindFirstChild("Humanoid")
+        local rootPart = character:FindFirstChild("HumanoidRootPart")
+        if not humanoid or not rootPart then return end
+        
+        local patterns = {
+            -- Pattern 1: Square walk
+            function()
+                local startPos = rootPart.Position
+                local size = math.random(8, CONFIG.MOVEMENT_DISTANCE)
+                local positions = {
+                    startPos + Vector3.new(size, 0, 0),
+                    startPos + Vector3.new(size, 0, size),
+                    startPos + Vector3.new(0, 0, size),
+                    startPos
+                }
+                
+                for _, pos in ipairs(positions) do
+                    humanoid:MoveTo(pos)
+                    task.wait(math.random(2, 4))
+                end
+                professionalLog("DEBUG", "Square movement pattern completed")
+            end,
+            
+            -- Pattern 2: Random walk with jumps
+            function()
+                for i = 1, math.random(3, 6) do
+                    local angle = math.random() * math.pi * 2
+                    local distance = math.random(5, CONFIG.MOVEMENT_DISTANCE)
+                    local direction = Vector3.new(math.cos(angle) * distance, 0, math.sin(angle) * distance)
+                    
+                    humanoid:MoveTo(rootPart.Position + direction)
+                    task.wait(math.random(1, 3))
+                    
+                    if math.random() > 0.5 then
+                        humanoid.Jump = true
+                        task.wait(1)
+                    end
+                end
+                professionalLog("DEBUG", "Random walk pattern completed")
+            end,
+            
+            -- Pattern 3: Circular movement
+            function()
+                local center = rootPart.Position
+                local radius = math.random(6, 10)
+                
+                for i = 1, 12 do
+                    local angle = (i / 12) * math.pi * 2
+                    local pos = center + Vector3.new(math.cos(angle) * radius, 0, math.sin(angle) * radius)
+                    humanoid:MoveTo(pos)
+                    task.wait(0.8)
+                end
+                professionalLog("DEBUG", "Circular movement pattern completed")
+            end
+        }
+        
+        local selectedPattern = patterns[math.random(1, #patterns)]
+        selectedPattern()
     end)
 end
 
--- GET STOCK DATA
-local function getStockData()
+local function executeToolUsage()
+    pcall(function()
+        local character = Players.LocalPlayer.Character
+        local backpack = Players.LocalPlayer:FindFirstChild("Backpack")
+        if not character or not backpack then return end
+        
+        local humanoid = character:FindFirstChild("Humanoid")
+        if not humanoid then return end
+        
+        -- Get all available tools
+        local tools = {}
+        for _, item in pairs(backpack:GetChildren()) do
+            if item:IsA("Tool") then
+                table.insert(tools, item)
+            end
+        end
+        
+        if #tools == 0 then return end
+        
+        -- Use multiple tools in sequence
+        local toolsToUse = math.min(#tools, math.random(1, 3))
+        
+        for i = 1, toolsToUse do
+            local tool = tools[math.random(1, #tools)]
+            
+            -- Equip tool
+            humanoid:EquipTool(tool)
+            task.wait(math.random(1, 2))
+            
+            if tool.Parent == character then
+                -- Use tool multiple times
+                for j = 1, math.random(3, 7) do
+                    tool:Activate()
+                    task.wait(math.random(0.3, 1))
+                    
+                    -- Move while using
+                    if math.random() > 0.6 then
+                        local rootPart = character:FindFirstChild("HumanoidRootPart")
+                        if rootPart then
+                            local angle = math.random() * math.pi * 2
+                            local distance = math.random(2, 5)
+                            local direction = Vector3.new(math.cos(angle) * distance, 0, math.sin(angle) * distance)
+                            humanoid:MoveTo(rootPart.Position + direction)
+                        end
+                    end
+                end
+                
+                task.wait(math.random(2, 5))
+                
+                -- Sometimes keep equipped
+                if math.random() > 0.4 then
+                    humanoid:UnequipTools()
+                end
+                
+                professionalLog("DEBUG", "Used tool: " .. tool.Name)
+            end
+            
+            task.wait(math.random(1, 3))
+        end
+    end)
+end
+
+local function professionalAntiAfk()
+    pcall(function()
+        local currentTime = os.time()
+        
+        -- Emergency mode
+        if currentTime - State.lastActivity >= CONFIG.EMERGENCY_AFK_TIME then
+            professionalLog("CRITICAL", "Emergency Anti-AFK activated!", true)
+            
+            for i = 1, 5 do
+                spawn(function() executeMovementPattern() end)
+                task.wait(2)
+                spawn(function() executeToolUsage() end)
+                task.wait(3)
+            end
+            
+            State.lastActivity = currentTime
+            State.emergencyMode = false
+            professionalLog("SUCCESS", "Emergency Anti-AFK completed", true)
+            return
+        end
+        
+        -- Regular anti-AFK
+        if currentTime < State.nextAntiAfk then return end
+        
+        professionalLog("INFO", "Executing professional anti-AFK sequence...")
+        
+        -- Execute movement
+        spawn(function()
+            executeMovementPattern()
+        end)
+        
+        -- Execute tool usage
+        if math.random() <= CONFIG.TOOL_USE_CHANCE then
+            spawn(function()
+                task.wait(math.random(2, 5))
+                executeToolUsage()
+            end)
+        end
+        
+        -- Update timers
+        State.lastActivity = currentTime
+        State.lastAntiAfk = currentTime
+        
+        local nextInterval = math.random(CONFIG.ANTI_AFK_MIN_INTERVAL, CONFIG.ANTI_AFK_MAX_INTERVAL)
+        State.nextAntiAfk = currentTime + nextInterval
+        
+        professionalLog("SUCCESS", string.format("Anti-AFK completed - Next in %d seconds", nextInterval))
+    end)
+end
+
+-- Professional Game Data Functions
+local function getValidatedStockData()
     local success, result = pcall(function()
-        local remotes = ReplicatedStorage:WaitForChild("Remotes", 10)
-        if not remotes then error("No remotes found") end
+        local remotes = ReplicatedStorage:WaitForChild("Remotes", 15)
+        if not remotes then
+            error("Game remotes not accessible")
+        end
         
-        local CommF = remotes:WaitForChild("CommF_", 10)
-        if not CommF then error("No CommF_ found") end
+        local CommF = remotes:WaitForChild("CommF_", 15)
+        if not CommF then
+            error("CommF_ remote not found")
+        end
         
-        local normalStock = CommF:InvokeServer("GetFruits", false)
-        local mirageStock = CommF:InvokeServer("GetFruits", true)
+        -- Get stock data with timeout protection
+        local normalStock, mirageStock
+        
+        local normalSuccess = pcall(function()
+            normalStock = CommF:InvokeServer("GetFruits", false)
+        end)
+        
+        local mirageSuccess = pcall(function()
+            mirageStock = CommF:InvokeServer("GetFruits", true)
+        end)
+        
+        if not normalSuccess or not mirageSuccess then
+            error("Failed to retrieve stock data from game")
+        end
         
         return {
             normal = normalStock or {},
@@ -419,179 +547,213 @@ local function getStockData()
     if success and result then
         return result
     else
-        smartLog("ERROR", "Failed to get stock data: " .. tostring(result))
+        professionalLog("ERROR", "Stock data retrieval failed: " .. tostring(result))
         return nil
     end
 end
 
--- SETUP CONNECTIONS
-local function setupConnections()
+-- Professional Session Management
+local function professionalCleanup()
     pcall(function()
-        -- Anti-idle
-        local VirtualUser = game:GetService("VirtualUser")
-        Players.LocalPlayer.Idled:Connect(function()
-            VirtualUser:CaptureController()
-            VirtualUser:ClickButton2(Vector2.new())
-            smartLog("INFO", "Idle prevented")
-        end)
+        if not State.sessionActive then return end
+        
+        professionalLog("INFO", "Executing professional session cleanup...")
+        
+        -- Cleanup all data
+        executeDataCleanup()
+        
+        -- Disconnect all connections
+        for _, connection in pairs(State.connections) do
+            if connection and connection.Connected then
+                connection:Disconnect()
+            end
+        end
+        State.connections = {}
+        
+        State.sessionActive = false
+        professionalLog("SUCCESS", "Professional cleanup completed")
+    end)
+end
+
+-- Professional Setup Functions
+local function setupProfessionalFeatures()
+    pcall(function()
+        -- Initialize timing
+        local currentTime = os.time()
+        State.lastActivity = currentTime
+        State.nextAntiAfk = currentTime + math.random(CONFIG.ANTI_AFK_MIN_INTERVAL, CONFIG.ANTI_AFK_MAX_INTERVAL)
         
         -- Teleport handling
-        Players.LocalPlayer.OnTeleport:Connect(function(state)
+        local teleportConnection = Players.LocalPlayer.OnTeleport:Connect(function(state)
             if state == Enum.TeleportState.Failed then
-                smartLog("WARN", "Teleport failed - rejoining")
-                task.wait(3)
+                professionalLog("WARN", "Teleport failed - executing rejoin protocol")
+                professionalCleanup()
+                task.wait(5)
                 TeleportService:Teleport(game.PlaceId, Players.LocalPlayer)
             end
         end)
+        table.insert(State.connections, teleportConnection)
+        
+        -- Window optimization
+        local focusLostConnection = UserInputService.WindowFocusReleased:Connect(function()
+            RunService:Set3dRenderingEnabled(false)
+        end)
+        table.insert(State.connections, focusLostConnection)
+        
+        local focusGainedConnection = UserInputService.WindowFocused:Connect(function()
+            RunService:Set3dRenderingEnabled(true)
+        end)
+        table.insert(State.connections, focusGainedConnection)
         
         -- Connection monitoring
-        local heartbeat = RunService.Heartbeat:Connect(function()
+        local heartbeatConnection = RunService.Heartbeat:Connect(function()
             if not game:IsLoaded() or not Players.LocalPlayer.Parent then
-                smartLog("CRITICAL", "Connection lost")
+                professionalLog("CRITICAL", "Connection lost - emergency cleanup")
+                professionalCleanup()
             end
         end)
-        table.insert(State.connections, heartbeat)
+        table.insert(State.connections, heartbeatConnection)
         
-        smartLog("SUCCESS", "Connections established")
+        professionalLog("SUCCESS", "Professional features initialized")
     end)
 end
 
--- MAIN SMART MONITORING LOOP
-local function startSmartMonitoring()
-    State.isRunning = true
-    State.lastUpdate = os.time()
-    State.lastPing = os.time()
-    
-    smartLog("SUCCESS", "SMART MONITOR STARTED - Only updates on NEW data!", true)
-    smartLog("INFO", "Player: " .. Players.LocalPlayer.Name)
-    smartLog("INFO", "Session: " .. CONFIG.SESSION_ID:sub(1, 8) .. "...")
-    
-    local cycleCount = 0
-    local pingCount = 0
-    local antiAfkCount = 0
-    
-    while State.isRunning do
-        cycleCount = cycleCount + 1
-        pingCount = pingCount + 1
-        antiAfkCount = antiAfkCount + 1
+-- Professional Main Loop
+local function executeProfessionalMonitoring()
+    pcall(function()
+        State.isRunning = true
+        State.lastUpdate = os.time()
         
-        -- KEEPALIVE PING SYSTEM (Every 30 seconds)
-        if pingCount >= (CONFIG.PING_INTERVAL / CONFIG.UPDATE_INTERVAL) then
-            sendKeepalivePing()
-            pingCount = 0
-        end
+        professionalLog("SUCCESS", "Professional Stock Monitor v2.0 NEW API started", true)
+        professionalLog("INFO", "Player: " .. tostring(Players.LocalPlayer.Name))
+        professionalLog("INFO", "Session: " .. CONFIG.SESSION_ID:sub(1, 8) .. "...")
+        professionalLog("INFO", "New API: " .. CONFIG.API_URL)
         
-        -- ANTI-AFK SYSTEM (Every 45 seconds)
-        if antiAfkCount >= (CONFIG.ANTI_AFK_INTERVAL / CONFIG.UPDATE_INTERVAL) then
-            executeSmartAntiAfk()
-            antiAfkCount = 0
-        end
+        -- Initial API health check
+        checkApiHealth()
         
-        -- STOCK DATA MONITORING (Every cycle)
-        local stockData = getStockData()
-        if stockData then
-            -- ONLY UPDATE IF NEW DATA DETECTED
-            if detectDataChanges(stockData) then
-                smartLog("INFO", "NEW DATA DETECTED - Updating API...", true)
-                if replaceDataCompletely(stockData) then
-                    smartLog("SUCCESS", "API updated with fresh data!", true)
+        -- Initial cleanup
+        executeDataCleanup()
+        
+        local cycleCount = 0
+        
+        while State.isRunning do
+            -- Execute anti-AFK
+            professionalAntiAfk()
+            
+            -- Get and process stock data
+            local stockData = getValidatedStockData()
+            
+            if stockData then
+                local currentHash = HttpService:JSONEncode(stockData)
+                local timeSinceUpdate = os.time() - State.lastUpdate
+                
+                -- Send if changed or forced update
+                if currentHash ~= State.lastStockHash or timeSinceUpdate >= 60 then
+                    if professionalDataSend(stockData) then
+                        State.lastStockHash = currentHash
+                        State.lastUpdate = os.time()
+                    end
                 else
-                    smartLog("ERROR", "Failed to update API with new data")
+                    professionalLog("DEBUG", "No stock changes detected")
                 end
+            else
+                professionalLog("WARN", "Stock data unavailable this cycle")
             end
-        else
-            smartLog("WARN", "Could not retrieve stock data this cycle")
+            
+            -- Status reporting
+            cycleCount = cycleCount + 1
+            if cycleCount >= 6 then
+                local timeSinceActivity = os.time() - State.lastActivity
+                local nextAfkIn = math.max(0, State.nextAntiAfk - os.time())
+                local apiStatus = State.apiHealthy and "HEALTHY" or "UNHEALTHY"
+                professionalLog("INFO", string.format("Status: %d updates | Activity: %ds ago | Next AFK: %ds | API: %s", 
+                    State.totalUpdates, timeSinceActivity, nextAfkIn, apiStatus))
+                cycleCount = 0
+            end
+            
+            task.wait(CONFIG.UPDATE_INTERVAL)
         end
         
-        -- STATUS REPORTING (Every minute)
-        if cycleCount >= (60 / CONFIG.UPDATE_INTERVAL) then
-            local timeSinceActivity = os.time() - State.lastActivity
-            local timeSincePing = os.time() - State.lastPing
-            smartLog("INFO", string.format("Status: %d updates | %d pings | Activity: %ds ago | Last ping: %ds ago", 
-                State.totalUpdates, State.totalPings, timeSinceActivity, timeSincePing))
-            cycleCount = 0
-        end
-        
-        task.wait(CONFIG.UPDATE_INTERVAL)
-    end
-    
-    smartLog("INFO", "Smart monitoring stopped")
-end
-
--- INITIALIZE SMART MONITOR
-local function initialize()
-    smartLog("INFO", "Initializing SMART monitor...")
-    
-    if not ReplicatedStorage:FindFirstChild("Remotes") then
-        smartLog("CRITICAL", "Not in Blox Fruits game!", true)
-        return
-    end
-    
-    setupConnections()
-    
-    spawn(function()
-        startSmartMonitoring()
+        professionalLog("INFO", "Professional monitoring stopped")
+        professionalCleanup()
     end)
-    
-    smartLog("SUCCESS", "SMART MONITOR INITIALIZED", true)
 end
 
--- CONTROL INTERFACE
-_G.SmartMonitor = {
+-- Professional Initialization
+local function initializeProfessionalMonitor()
+    pcall(function()
+        professionalLog("INFO", "Initializing Professional Monitor with NEW API...")
+        
+        -- Validate environment
+        if not ReplicatedStorage:FindFirstChild("Remotes") then
+            professionalLog("CRITICAL", "Invalid game environment detected!", true)
+            return
+        end
+        
+        -- Setup systems
+        setupProfessionalFeatures()
+        
+        -- Start monitoring
+        spawn(function()
+            executeProfessionalMonitoring()
+        end)
+        
+        professionalLog("SUCCESS", "Professional Monitor with NEW API initialized successfully", true)
+    end)
+end
+
+-- Professional Control Interface
+_G.NewApiStockMonitor = {
     stop = function()
         State.isRunning = false
-        smartLog("INFO", "Monitor stopped")
+        professionalLog("INFO", "Professional stop executed")
     end,
     
     restart = function()
         State.isRunning = false
-        task.wait(2)
-        initialize()
+        task.wait(3)
+        initializeProfessionalMonitor()
     end,
     
-    forceUpdate = function()
-        State.lastStockHash = ""
-        smartLog("INFO", "Forced update - will detect changes on next cycle")
+    forceCleanup = function()
+        executeDataCleanup()
+        professionalLog("SUCCESS", "Force cleanup executed")
     end,
     
-    sendPing = function()
-        sendKeepalivePing()
-        smartLog("INFO", "Manual ping sent")
-    end,
-    
-    forceAntiAfk = function()
-        executeSmartAntiAfk()
+    checkHealth = function()
+        return checkApiHealth()
     end,
     
     status = function()
         local timeSinceActivity = os.time() - State.lastActivity
-        local timeSincePing = os.time() - State.lastPing
-        local timeSinceUpdate = os.time() - State.lastUpdate
+        local nextAfkIn = math.max(0, State.nextAntiAfk - os.time())
+        local timeSinceCleanup = os.time() - State.lastCleanupTime
         
-        print("=== SMART MONITOR STATUS ===")
+        print("=== NEW API PROFESSIONAL STOCK MONITOR STATUS ===")
         print("Running:", State.isRunning)
         print("Total Updates:", State.totalUpdates)
-        print("Total Pings:", State.totalPings)
+        print("API Health:", State.apiHealthy and "HEALTHY" or "UNHEALTHY")
+        print("API URL:", CONFIG.API_URL)
+        print("Auth Key:", CONFIG.AUTH_HEADER)
         print("Time Since Activity:", timeSinceActivity, "seconds")
-        print("Time Since Ping:", timeSincePing, "seconds")
-        print("Time Since Update:", timeSinceUpdate, "seconds")
-        print("Anti-AFK Running:", State.antiAfkRunning)
-        print("Data Change Detected:", State.dataChangeDetected)
+        print("Next Anti-AFK:", nextAfkIn, "seconds")
+        print("Last Cleanup:", timeSinceCleanup, "seconds ago")
+        print("Active Connections:", #State.connections)
         print("Session ID:", CONFIG.SESSION_ID:sub(1, 8) .. "...")
-        print("===========================")
+        print("Cleanup In Progress:", State.dataCleanupInProgress)
+        print("================================================")
         return State
     end,
     
-    testDataChange = function()
-        State.lastStockHash = "test_change"
-        smartLog("INFO", "Test data change triggered")
+    emergencyAntiAfk = function()
+        State.nextAntiAfk = 0
+        professionalLog("INFO", "Emergency Anti-AFK triggered")
     end
 }
 
--- START SMART MONITOR
-initialize()
-smartLog("SUCCESS", "SMART MONITOR READY!", true)
-smartLog("INFO", "✅ Only updates on NEW data detection")
-smartLog("INFO", "✅ Completely replaces old data with new")
-smartLog("INFO", "✅ Sends keepalive pings every 30 seconds")
-smartLog("INFO", "Use _G.SmartMonitor.status() for detailed info")
+-- Initialize Professional Monitor with New API
+initializeProfessionalMonitor()
+professionalLog("SUCCESS", "NEW API PROFESSIONAL MONITOR READY!", true)
+professionalLog("INFO", "Use _G.NewApiStockMonitor.checkHealth() to test new API")
+professionalLog("INFO", "Use _G.NewApiStockMonitor.status() for detailed status")
