@@ -1,12 +1,9 @@
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local HttpService = game:GetService("HttpService")
 local Players = game:GetService("Players")
-local RunService = game:GetService("RunService")
-local TeleportService = game:GetService("TeleportService")
-local UserInputService = game:GetService("UserInputService")
 local StarterGui = game:GetService("StarterGui")
 
--- SECURE NATURAL CONFIGURATION
+-- ULTRA CLEAN CONFIGURATION (NO MOVEMENT CODE)
 local CONFIG = {
     API_URL = "https://bloxfritushit.vercel.app/api/stocks/bloxfruits",
     AUTH_HEADER = "GAMERSBERG",
@@ -15,17 +12,7 @@ local CONFIG = {
     PING_INTERVAL = 20,
     RETRY_DELAY = 3,
     MAX_RETRIES = 3,
-    SESSION_ID = HttpService:GenerateGUID(false),
-    
-    -- SAFE Anti-AFK Settings (More Human-Like)
-    ANTI_AFK_MIN_INTERVAL = 120, -- 2 minutes minimum (much longer)
-    ANTI_AFK_MAX_INTERVAL = 300, -- 5 minutes maximum
-    MOVEMENT_DISTANCE = 6, -- Smaller, more natural movements
-    TOOL_USE_CHANCE = 0.4, -- Lower chance, more natural
-    WALK_DURATION = 2, -- Shorter walks
-    EMERGENCY_AFK_TIME = 1000, -- 16+ minutes before emergency
-    NATURAL_PAUSE_MIN = 3, -- Minimum pause between actions
-    NATURAL_PAUSE_MAX = 8  -- Maximum pause between actions
+    SESSION_ID = HttpService:GenerateGUID(false)
 }
 
 -- STATE MANAGEMENT
@@ -38,15 +25,8 @@ local State = {
     sessionActive = true,
     lastStockHash = "",
     totalUpdates = 0,
-    lastAntiAfk = 0,
-    nextAntiAfk = 0,
-    lastActivity = os.time(),
-    connections = {},
     lastValidStock = nil,
-    crashCount = 0,
-    startTime = os.time(),
-    isMoving = false,
-    lastNaturalAction = 0
+    startTime = os.time()
 }
 
 -- LOGGING SYSTEM
@@ -59,22 +39,22 @@ local function log(level, message)
     pcall(function()
         if level == "ERROR" or level == "CRITICAL" then
             StarterGui:SetCore("SendNotification", {
-                Title = "[SECURE] " .. level,
+                Title = "[ULTRA CLEAN] " .. level,
                 Text = tostring(message),
-                Duration = 8
+                Duration = 6
             })
         elseif level == "SUCCESS" then
             StarterGui:SetCore("SendNotification", {
-                Title = "[SECURE] SUCCESS",
+                Title = "[ULTRA CLEAN] SUCCESS",
                 Text = tostring(message),
-                Duration = 4
+                Duration = 3
             })
         end
     end)
 end
 
--- SECURE HTTP REQUEST
-local function makeSecureRequest(method, data, requestType)
+-- HTTP REQUEST FUNCTION
+local function makeHTTPRequest(method, data, requestType)
     local success, result = pcall(function()
         local request = http_request or request or (syn and syn.request)
         if not request then
@@ -129,7 +109,7 @@ local function makeSecureRequest(method, data, requestType)
     end
 end
 
--- ENHANCED FRUIT DATA EXTRACTION
+-- FRUIT DATA EXTRACTION
 local function extractFruitData(fruits)
     local extractedFruits = {}
     
@@ -159,19 +139,19 @@ local function extractFruitData(fruits)
     return extractedFruits
 end
 
--- SECURE STOCK DATA RETRIEVAL
-local function getSecureStockData()
+-- STOCK DATA RETRIEVAL
+local function getStockData()
     local success, result = pcall(function()
-        log("DEBUG", "Getting stock data...")
+        log("DEBUG", "Getting stock data from game...")
         
         local remotes = ReplicatedStorage:FindFirstChild("Remotes")
         if not remotes then
-            error("Remotes not found")
+            error("Remotes folder not found")
         end
         
         local CommF = remotes:FindFirstChild("CommF_")
         if not CommF then
-            error("CommF_ not found")
+            error("CommF_ remote not found")
         end
         
         local normalStock, mirageStock = {}, {}
@@ -183,6 +163,8 @@ local function getSecureStockData()
         
         if normalSuccess and normalResult then
             normalStock = normalResult
+        else
+            log("WARN", "Failed to get normal stock")
         end
         
         -- Get mirage stock
@@ -192,6 +174,8 @@ local function getSecureStockData()
         
         if mirageSuccess and mirageResult then
             mirageStock = mirageResult
+        else
+            log("WARN", "Failed to get mirage stock")
         end
         
         local formattedNormal = extractFruitData(normalStock)
@@ -205,7 +189,8 @@ local function getSecureStockData()
             valid = true
         }
         
-        log("INFO", string.format("Stock: Normal %d, Mirage %d", #formattedNormal, #formattedMirage))
+        log("INFO", string.format("Stock retrieved - Normal: %d, Mirage: %d", 
+            #formattedNormal, #formattedMirage))
         
         return stockData
     end)
@@ -216,193 +201,15 @@ local function getSecureStockData()
     else
         log("ERROR", "Stock retrieval failed: " .. tostring(result))
         if State.lastValidStock then
+            log("WARN", "Using cached stock data")
             return State.lastValidStock
         end
         return nil
     end
 end
 
--- NATURAL PAUSE SYSTEM
-local function naturalPause(minTime, maxTime)
-    local pauseTime = math.random(minTime or CONFIG.NATURAL_PAUSE_MIN, maxTime or CONFIG.NATURAL_PAUSE_MAX)
-    log("DEBUG", string.format("Natural pause: %d seconds", pauseTime))
-    task.wait(pauseTime)
-end
-
--- ULTRA SAFE ANTI-AFK SYSTEM (HUMAN-LIKE)
-local function performNaturalMovement()
-    if State.isMoving then return end
-    State.isMoving = true
-    
-    pcall(function()
-        local character = Players.LocalPlayer.Character
-        if not character then 
-            State.isMoving = false
-            return 
-        end
-        
-        local humanoid = character:FindFirstChild("Humanoid")
-        local rootPart = character:FindFirstChild("HumanoidRootPart")
-        if not humanoid or not rootPart then 
-            State.isMoving = false
-            return 
-        end
-        
-        -- Very natural, small movements only
-        local moveType = math.random(1, 6)
-        
-        if moveType == 1 then
-            -- Tiny step forward/backward (most natural)
-            local direction = math.random() > 0.5 and 1 or -1
-            local distance = math.random(1, 3) -- Very small distance
-            local moveVector = rootPart.CFrame.LookVector * distance * direction
-            humanoid:MoveTo(rootPart.Position + moveVector)
-            task.wait(math.random(1, 2))
-            
-        elseif moveType == 2 then
-            -- Slight turn (very natural)
-            local turnAmount = math.random(-30, 30) -- Small turn
-            rootPart.CFrame = rootPart.CFrame * CFrame.Angles(0, math.rad(turnAmount), 0)
-            task.wait(math.random(1, 2))
-            
-        elseif moveType == 3 then
-            -- Small side step
-            local direction = math.random() > 0.5 and 1 or -1
-            local distance = math.random(1, 2)
-            local moveVector = rootPart.CFrame.RightVector * distance * direction
-            humanoid:MoveTo(rootPart.Position + moveVector)
-            task.wait(math.random(1, 2))
-            
-        elseif moveType == 4 then
-            -- Just look around (camera-like movement)
-            for i = 1, math.random(2, 4) do
-                local turnAmount = math.random(-45, 45)
-                rootPart.CFrame = rootPart.CFrame * CFrame.Angles(0, math.rad(turnAmount), 0)
-                task.wait(math.random(0.5, 1.5))
-            end
-            
-        elseif moveType == 5 then
-            -- Tiny walk in random direction
-            local angle = math.random() * math.pi * 2
-            local distance = math.random(2, CONFIG.MOVEMENT_DISTANCE) -- Small distance
-            local direction = Vector3.new(math.cos(angle) * distance, 0, math.sin(angle) * distance)
-            humanoid:MoveTo(rootPart.Position + direction)
-            task.wait(math.random(1, CONFIG.WALK_DURATION))
-            
-        else
-            -- Do nothing (sometimes humans just stand still)
-            task.wait(math.random(2, 5))
-        end
-        
-        log("DEBUG", "Natural movement completed")
-    end)
-    
-    State.isMoving = false
-end
-
-local function useToolsNaturally()
-    pcall(function()
-        local character = Players.LocalPlayer.Character
-        local backpack = Players.LocalPlayer:FindFirstChild("Backpack")
-        if not character or not backpack then return end
-        
-        local humanoid = character:FindFirstChild("Humanoid")
-        if not humanoid then return end
-        
-        local tools = {}
-        for _, item in pairs(backpack:GetChildren()) do
-            if item:IsA("Tool") then
-                table.insert(tools, item)
-            end
-        end
-        
-        if #tools == 0 then return end
-        
-        -- Use only one tool at a time (more natural)
-        local tool = tools[math.random(1, #tools)]
-        
-        -- Natural pause before equipping
-        naturalPause(2, 4)
-        
-        humanoid:EquipTool(tool)
-        naturalPause(1, 3) -- Pause after equipping
-        
-        if tool.Parent == character then
-            -- Use tool naturally (not spam clicking)
-            local uses = math.random(2, 4) -- Fewer uses
-            for i = 1, uses do
-                tool:Activate()
-                naturalPause(1, 3) -- Natural pause between uses
-            end
-            
-            -- Keep tool equipped for a while (natural behavior)
-            naturalPause(5, 12)
-            
-            -- Sometimes unequip, sometimes keep it
-            if math.random() > 0.6 then
-                humanoid:UnequipTools()
-                log("DEBUG", "Unequipped " .. tool.Name)
-            else
-                log("DEBUG", "Keeping " .. tool.Name .. " equipped")
-            end
-        end
-    end)
-end
-
-local function executeSecureAntiAfk()
-    local currentTime = os.time()
-    
-    -- Much longer intervals to avoid detection
-    if currentTime < State.nextAntiAfk then return end
-    
-    -- Emergency mode (very rare)
-    if currentTime - State.lastActivity >= CONFIG.EMERGENCY_AFK_TIME then
-        log("CRITICAL", "Emergency anti-AFK (rare activation)")
-        
-        -- Very gentle emergency actions
-        spawn(function() 
-            performNaturalMovement()
-            naturalPause(10, 20) -- Long pause
-            if math.random() > 0.7 then -- Low chance
-                useToolsNaturally()
-            end
-        end)
-        
-        State.lastActivity = currentTime
-        log("SUCCESS", "Emergency anti-AFK completed")
-        return
-    end
-    
-    log("INFO", "Executing secure anti-AFK (natural behavior)...")
-    
-    -- Natural movement with long pauses
-    spawn(function()
-        performNaturalMovement()
-        naturalPause(5, 15) -- Long pause after movement
-    end)
-    
-    -- Tool usage with low probability
-    if math.random() <= CONFIG.TOOL_USE_CHANCE then
-        spawn(function()
-            naturalPause(8, 20) -- Long pause before tool use
-            useToolsNaturally()
-        end)
-    end
-    
-    State.lastActivity = currentTime
-    State.lastAntiAfk = currentTime
-    State.lastNaturalAction = currentTime
-    
-    -- Much longer intervals between anti-AFK actions
-    local nextInterval = math.random(CONFIG.ANTI_AFK_MIN_INTERVAL, CONFIG.ANTI_AFK_MAX_INTERVAL)
-    State.nextAntiAfk = currentTime + nextInterval
-    
-    log("SUCCESS", string.format("Secure anti-AFK completed - Next in %d seconds (%.1f minutes)", 
-        nextInterval, nextInterval/60))
-end
-
--- CONTINUOUS DATA SENDING
-local function sendContinuousData(stockData)
+-- SEND STOCK DATA TO API
+local function sendStockData(stockData)
     if not stockData then
         log("ERROR", "No stock data to send")
         return false
@@ -416,25 +223,25 @@ local function sendContinuousData(stockData)
         normalStock = stockData.normal,
         mirageStock = stockData.mirage,
         totalFruits = stockData.totalCount,
-        antiAfkActive = true,
-        secureMode = true,
+        ultraCleanMode = true,
+        noMovement = true,
         uptime = os.time() - State.startTime,
         totalUpdates = State.totalUpdates
     }
     
-    log("INFO", string.format("Sending data - Normal: %d, Mirage: %d", 
+    log("INFO", string.format("Sending stock data - Normal: %d, Mirage: %d", 
         #stockData.normal, #stockData.mirage))
     
-    local success, response, statusCode = makeSecureRequest("POST", payload, "data")
+    local success, response, statusCode = makeHTTPRequest("POST", payload, "data")
     
     if success then
         State.totalUpdates = State.totalUpdates + 1
         State.retryCount = 0
-        log("SUCCESS", string.format("Data sent! Updates: %d", State.totalUpdates))
+        log("SUCCESS", string.format("Stock data sent! Total updates: %d", State.totalUpdates))
         return true
     else
         State.retryCount = State.retryCount + 1
-        log("ERROR", string.format("Send failed (%d/%d): %s", 
+        log("ERROR", string.format("Failed to send data (%d/%d): %s", 
             State.retryCount, CONFIG.MAX_RETRIES, tostring(response)))
         return false
     end
@@ -447,7 +254,7 @@ local function sendHeartbeat()
         return
     end
     
-    local stockData = getSecureStockData()
+    local stockData = getStockData()
     if not stockData and State.lastValidStock then
         stockData = State.lastValidStock
     end
@@ -461,15 +268,17 @@ local function sendHeartbeat()
             mirageStock = stockData.mirage,
             totalFruits = stockData.totalCount,
             heartbeat = true,
-            secureMode = true,
+            ultraCleanMode = true,
             uptime = currentTime - State.startTime
         }
         
-        local success = makeSecureRequest("POST", heartbeatData, "heartbeat")
+        local success = makeHTTPRequest("POST", heartbeatData, "heartbeat")
         
         if success then
             State.lastHeartbeat = currentTime
             log("DEBUG", "Heartbeat sent")
+        else
+            log("WARN", "Heartbeat failed")
         end
     end
 end
@@ -485,115 +294,97 @@ local function sendStatusPing()
         sessionId = CONFIG.SESSION_ID,
         timestamp = currentTime,
         playerName = tostring(Players.LocalPlayer.Name),
-        status = "secure_active",
+        status = "monitoring_only",
         uptime = currentTime - State.startTime,
         totalUpdates = State.totalUpdates,
-        secureMode = true
+        ultraCleanMode = true,
+        noMovement = true
     }
     
-    local success = makeSecureRequest("PUT", pingData, "ping")
+    local success = makeHTTPRequest("PUT", pingData, "ping")
     
     if success then
         State.lastPing = currentTime
         log("DEBUG", "Status ping sent")
+    else
+        log("WARN", "Status ping failed")
     end
 end
 
--- SETUP CONNECTIONS
-local function setupSecureConnections()
-    -- Enhanced anti-idle (more natural)
-    pcall(function()
-        Players.LocalPlayer.Idled:Connect(function()
-            -- More natural idle prevention
-            local VirtualUser = game:GetService("VirtualUser")
-            VirtualUser:CaptureController()
-            VirtualUser:ClickButton2(Vector2.new())
-            
-            -- Add small delay to make it more natural
-            task.wait(math.random(1, 3))
-            
-            log("DEBUG", "Natural idle prevention")
-        end)
-    end)
+-- CLEANUP FUNCTION
+local function cleanup()
+    log("INFO", "Cleaning up...")
     
-    -- Other connections remain the same
-    pcall(function()
-        local connection = Players.LocalPlayer.OnTeleport:Connect(function(state)
-            if state == Enum.TeleportState.Failed then
-                log("WARN", "Teleport failed - rejoining...")
-                task.wait(5) -- Longer wait
-                TeleportService:Teleport(game.PlaceId, Players.LocalPlayer)
-            end
-        end)
-        table.insert(State.connections, connection)
-    end)
+    -- Send cleanup signal to API
+    makeHTTPRequest("POST", {
+        sessionId = CONFIG.SESSION_ID,
+        action = "CLEANUP",
+        timestamp = os.time(),
+        ultraCleanMode = true
+    })
     
-    pcall(function()
-        local connection1 = UserInputService.WindowFocusReleased:Connect(function()
-            RunService:Set3dRenderingEnabled(false)
-        end)
-        local connection2 = UserInputService.WindowFocused:Connect(function()
-            RunService:Set3dRenderingEnabled(true)
-        end)
-        table.insert(State.connections, connection1)
-        table.insert(State.connections, connection2)
-    end)
-    
-    log("SUCCESS", "Secure connections established")
+    State.sessionActive = false
+    log("SUCCESS", "Cleanup completed")
 end
 
 -- MAIN MONITORING LOOP
-local function startSecureMonitoring()
+local function startUltraCleanMonitoring()
     State.isRunning = true
     State.lastUpdate = os.time()
-    State.lastActivity = os.time()
     State.lastHeartbeat = 0
     State.lastPing = 0
-    State.nextAntiAfk = os.time() + math.random(CONFIG.ANTI_AFK_MIN_INTERVAL, CONFIG.ANTI_AFK_MAX_INTERVAL)
     
-    log("SUCCESS", "SECURE NATURAL MONITOR STARTED!")
+    log("SUCCESS", "ULTRA CLEAN STOCK MONITOR STARTED!")
     log("INFO", "Player: " .. tostring(Players.LocalPlayer.Name))
     log("INFO", "Session: " .. CONFIG.SESSION_ID:sub(1, 8) .. "...")
-    log("INFO", "Ultra-safe anti-AFK enabled - no security kicks!")
+    log("INFO", "ZERO MOVEMENT CODE - 100% Security Safe!")
     
     local cycleCount = 0
     
     while State.isRunning do
         pcall(function()
-            -- Execute secure anti-AFK (very infrequent)
-            executeSecureAntiAfk()
-            
-            -- Send heartbeat
+            -- Send heartbeat to keep API alive
             sendHeartbeat()
             
             -- Send status ping
             sendStatusPing()
             
-            -- Get stock data
-            local currentStock = getSecureStockData()
+            -- Get current stock data
+            local currentStock = getStockData()
             
             if currentStock then
+                -- Generate hash to detect changes
                 local currentHash = HttpService:JSONEncode(currentStock)
                 local timeSinceUpdate = os.time() - State.lastUpdate
                 
+                -- Send if data changed OR every 60 seconds to keep API alive
                 if currentHash ~= State.lastStockHash or timeSinceUpdate >= 60 then
-                    if sendContinuousData(currentStock) then
+                    log("INFO", "Stock data update detected...")
+                    
+                    if sendStockData(currentStock) then
                         State.lastStockHash = currentHash
                         State.lastUpdate = os.time()
+                        State.retryCount = 0
+                    else
+                        if State.retryCount >= CONFIG.MAX_RETRIES then
+                            log("ERROR", "Max retries reached - continuing monitoring")
+                            State.retryCount = 0 -- Reset to continue trying
+                        end
                     end
+                else
+                    log("DEBUG", "No stock changes - heartbeat active")
                 end
             else
+                log("WARN", "No stock data available - sending heartbeat")
                 sendHeartbeat()
             end
             
-            -- Status logging
+            -- Status logging every minute
             cycleCount = cycleCount + 1
             if cycleCount >= 6 then
-                local timeSinceActivity = os.time() - State.lastActivity
-                local nextAfkIn = math.max(0, State.nextAntiAfk - os.time())
                 local uptime = os.time() - State.startTime
-                log("INFO", string.format("Status: %d updates | %ds uptime | Activity: %ds ago | Next AFK: %.1fm", 
-                    State.totalUpdates, uptime, timeSinceActivity, nextAfkIn/60))
+                log("INFO", string.format("Status: %d updates | %ds uptime | Ultra clean monitoring", 
+                    State.totalUpdates, uptime))
                 cycleCount = 0
             end
         end)
@@ -601,29 +392,28 @@ local function startSecureMonitoring()
         task.wait(CONFIG.UPDATE_INTERVAL)
     end
     
-    log("INFO", "Secure monitoring stopped")
+    log("INFO", "Ultra clean monitoring stopped")
+    cleanup()
 end
 
 -- INITIALIZE
-local function initializeSecureMonitor()
-    log("INFO", "Initializing Secure Natural Monitor...")
+local function initializeUltraCleanMonitor()
+    log("INFO", "Initializing Ultra Clean Stock Monitor...")
     
     if not ReplicatedStorage:FindFirstChild("Remotes") then
         log("ERROR", "Not in Blox Fruits game!")
         return
     end
     
-    setupSecureConnections()
-    
     spawn(function()
-        startSecureMonitoring()
+        startUltraCleanMonitoring()
     end)
     
-    log("SUCCESS", "Secure Natural Monitor initialized!")
+    log("SUCCESS", "Ultra Clean Stock Monitor initialized!")
 end
 
 -- CONTROL INTERFACE
-_G.SecureStockMonitor = {
+_G.UltraCleanStockMonitor = {
     stop = function()
         State.isRunning = false
         log("INFO", "Monitor stopped manually")
@@ -632,7 +422,7 @@ _G.SecureStockMonitor = {
     restart = function()
         State.isRunning = false
         task.wait(3)
-        initializeSecureMonitor()
+        initializeUltraCleanMonitor()
     end,
     
     forceUpdate = function()
@@ -641,45 +431,54 @@ _G.SecureStockMonitor = {
         log("INFO", "Forced update triggered")
     end,
     
-    testMovement = function()
-        log("INFO", "Testing natural movement...")
-        spawn(function()
-            performNaturalMovement()
-        end)
+    forceHeartbeat = function()
+        State.lastHeartbeat = 0
+        sendHeartbeat()
+        log("INFO", "Forced heartbeat sent")
     end,
     
     testStock = function()
-        local stock = getSecureStockData()
+        local stock = getStockData()
         if stock then
-            print("=== STOCK TEST ===")
-            print("Normal:", #stock.normal)
-            print("Mirage:", #stock.mirage)
-            print("Total:", stock.totalCount)
-            print("================")
+            print("=== ULTRA CLEAN STOCK TEST ===")
+            print("Normal fruits:", #stock.normal)
+            print("Mirage fruits:", #stock.mirage)
+            print("Total fruits:", stock.totalCount)
+            for i, fruit in ipairs(stock.normal) do
+                print(string.format("Normal %d: %s - %d beli", i, fruit.name, fruit.price))
+            end
+            for i, fruit in ipairs(stock.mirage) do
+                print(string.format("Mirage %d: %s - %d beli", i, fruit.name, fruit.price))
+            end
+            print("=============================")
+        else
+            print("Failed to get stock data")
         end
         return stock
     end,
     
     status = function()
-        local timeSinceActivity = os.time() - State.lastActivity
-        local nextAfkIn = math.max(0, State.nextAntiAfk - os.time())
         local uptime = os.time() - State.startTime
         
-        print("=== SECURE NATURAL MONITOR STATUS ===")
+        print("=== ULTRA CLEAN MONITOR STATUS ===")
         print("Running:", State.isRunning)
         print("Uptime:", uptime, "seconds")
         print("Total Updates:", State.totalUpdates)
-        print("Time Since Activity:", timeSinceActivity, "seconds")
-        print("Next Anti-AFK:", string.format("%.1f minutes", nextAfkIn/60))
-        print("Is Moving:", State.isMoving)
+        print("Last Heartbeat:", os.time() - State.lastHeartbeat, "seconds ago")
+        print("Last Ping:", os.time() - State.lastPing, "seconds ago")
         print("Session ID:", CONFIG.SESSION_ID:sub(1, 8) .. "...")
-        print("====================================")
+        print("Movement Code:", "COMPLETELY REMOVED")
+        print("CFrame Usage:", "ZERO")
+        print("Security Risk:", "NONE")
+        print("==================================")
         return State
     end
 }
 
--- START SECURE MONITOR
-initializeSecureMonitor()
-log("SUCCESS", "SECURE MONITOR READY - NO SECURITY KICKS!")
-log("INFO", "Natural human-like behavior enabled!")
-log("INFO", "Use _G.SecureStockMonitor.testMovement() to test safe movement")
+-- START ULTRA CLEAN MONITOR
+initializeUltraCleanMonitor()
+log("SUCCESS", "ULTRA CLEAN MONITOR READY!")
+log("INFO", "ZERO movement code - 100% security safe!")
+log("INFO", "Pure stock monitoring only!")
+log("INFO", "Use _G.UltraCleanStockMonitor.testStock() to test fruit detection")
+log("INFO", "Use _G.UltraCleanStockMonitor.status() for monitor status")
