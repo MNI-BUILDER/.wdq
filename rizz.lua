@@ -5,8 +5,8 @@ local StarterGui = game:GetService("StarterGui")
 
 -- ULTRA CLEAN CONFIGURATION (NO MOVEMENT CODE)
 local CONFIG = {
-    API_URL = "https://bloxfritushit.vercel.app/api/stocks/bloxfruits",
-    AUTH_HEADER = "GAMERSBERG",
+    API_URL = "httphttp://204.12.233.39:3000/api/stocks/bloxfruits",
+    AUTH_HEADER = "GAMERSBERGGAG",
     UPDATE_INTERVAL = 10,
     HEARTBEAT_INTERVAL = 25,
     PING_INTERVAL = 20,
